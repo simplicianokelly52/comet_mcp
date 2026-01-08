@@ -49,7 +49,7 @@ FORMATTING WARNING:
       type: "object",
       properties: {
         prompt: { type: "string", description: "Question or task for Comet - focus on goals and context" },
-        timeout: { type: "number", description: "Max wait time in ms (default: 300000 = 5 min)" },
+        wait: { type: "number", description: "Max time to wait for completion in ms (default: 15000 = 15s). If task isn't done, returns 'in progress' - use comet_poll to check later." },
         newChat: { type: "boolean", description: "Start a fresh conversation (default: false)" },
         agentic: { type: "boolean", description: "Enable browser control mode - prepends 'Take control of my browser and' to trigger Comet's agentic browsing (default: false)" },
       },
@@ -58,7 +58,7 @@ FORMATTING WARNING:
   },
   {
     name: "comet_poll",
-    description: "Check agent status and progress. Call repeatedly to monitor agentic tasks.",
+    description: "Check agent status and get response when done. Use after comet_ask returns 'in progress'. Returns status (working/completed), steps taken, and response if completed.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -142,7 +142,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "comet_ask": {
         let prompt = args?.prompt as string;
-        const timeout = (args?.timeout as number) || 300000; // Default 5 minutes
+        const wait = (args?.wait as number) || 15000; // Default 15 seconds initial wait
         const newChat = (args?.newChat as boolean) || false;
         const agentic = (args?.agentic as boolean) || false;
 
@@ -170,104 +170,77 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Send the prompt
         await cometAI.sendPrompt(prompt);
 
-        // Wait for completion with polling - log progress to stderr in real-time
+        // Wait up to 'wait' ms for completion (non-blocking after that)
         const startTime = Date.now();
-        const progressLog: string[] = [];
-        const seenSteps = new Set<string>();
-        let lastUrl = '';
-        let sawWorkingState = false;  // Track if we've seen task actually start
+        const stepsCollected: string[] = [];
+        let sawWorkingState = false;
 
-        const log = (msg: string) => {
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          const line = `[comet ${elapsed}s] ${msg}`;
-          console.error(line);  // stderr won't interfere with MCP protocol
-          progressLog.push(line);
-        };
-
-        log('🚀 Task started');
-
-        while (Date.now() - startTime < timeout) {
+        while (Date.now() - startTime < wait) {
           await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2s
 
           const status = await cometAI.getAgentStatus();
 
-          // Log new steps we haven't seen
+          // Collect steps
           for (const step of status.steps) {
-            if (!seenSteps.has(step)) {
-              seenSteps.add(step);
-              log(`📋 ${step}`);
+            if (!stepsCollected.includes(step)) {
+              stepsCollected.push(step);
             }
           }
 
-          // Log URL changes during agentic browsing
-          if (status.agentBrowsingUrl && status.agentBrowsingUrl !== lastUrl) {
-            lastUrl = status.agentBrowsingUrl;
-            log(`🌐 ${lastUrl}`);
-          }
-
-          // Track if task has actually started (working state)
+          // Track if task has started
           if (status.status === 'working') {
-            if (!sawWorkingState) {
-              sawWorkingState = true;
-              log('⚙️ Task processing...');
-            }
-            if (status.currentStep && !progressLog[progressLog.length - 1]?.includes(status.currentStep)) {
-              log(`⏳ ${status.currentStep}`);
-            }
+            sawWorkingState = true;
           }
 
-          // Only accept "completed" if we've seen the task actually start
-          // This prevents returning stale responses from previous queries
-          if (status.status === 'completed' && sawWorkingState) {
-            log('✅ Task completed');
-            let output = status.response || 'Task completed (no response text extracted)';
-            return { content: [{ type: "text", text: output }] };
-          }
-
-          // If still showing "completed" but we haven't seen "working" yet,
-          // it's the old response - wait for new task to start
-          if (status.status === 'completed' && !sawWorkingState) {
-            // Check if it's been too long without seeing working state (maybe simple query)
-            const elapsed = Date.now() - startTime;
-            if (elapsed > 10000) {
-              // After 10s, if still showing completed, accept it
-              log('✅ Task completed (quick response)');
-              let output = status.response || 'Task completed (no response text extracted)';
-              return { content: [{ type: "text", text: output }] };
-            }
+          // Task completed - return result directly
+          if (status.status === 'completed' && (sawWorkingState || Date.now() - startTime > 8000)) {
+            return { content: [{ type: "text", text: status.response || 'Task completed (no response text extracted)' }] };
           }
         }
 
-        // Timeout
-        log('⏰ Timeout');
-        return {
-          content: [{
-            type: "text",
-            text: `Timeout after ${timeout/1000}s.\n\nProgress:\n${progressLog.join('\n')}\n\nUse comet_poll to check if still working.`,
-          }],
-        };
+        // Still working after initial wait - return "in progress" (non-blocking)
+        const finalStatus = await cometAI.getAgentStatus();
+        let inProgressMsg = `Task in progress (${stepsCollected.length} steps so far).\n`;
+        inProgressMsg += `Status: ${finalStatus.status.toUpperCase()}\n`;
+        if (finalStatus.currentStep) {
+          inProgressMsg += `Current: ${finalStatus.currentStep}\n`;
+        }
+        if (finalStatus.agentBrowsingUrl) {
+          inProgressMsg += `Browsing: ${finalStatus.agentBrowsingUrl}\n`;
+        }
+        if (stepsCollected.length > 0) {
+          inProgressMsg += `\nSteps:\n${stepsCollected.map(s => `  • ${s}`).join('\n')}\n`;
+        }
+        inProgressMsg += `\nUse comet_poll to check progress or comet_stop to cancel.`;
+
+        return { content: [{ type: "text", text: inProgressMsg }] };
       }
 
       case "comet_poll": {
         const status = await cometAI.getAgentStatus();
+
+        // If completed, return the response directly (most useful case)
+        if (status.status === 'completed' && status.response) {
+          return { content: [{ type: "text", text: status.response }] };
+        }
+
+        // Still working - return progress info
         let output = `Status: ${status.status.toUpperCase()}\n`;
 
         if (status.agentBrowsingUrl) {
           output += `Browsing: ${status.agentBrowsingUrl}\n`;
         }
 
+        if (status.currentStep) {
+          output += `Current: ${status.currentStep}\n`;
+        }
+
         if (status.steps.length > 0) {
-          output += `\nRecent steps:\n${status.steps.map(s => `  • ${s}`).join('\n')}\n`;
+          output += `\nSteps:\n${status.steps.map(s => `  • ${s}`).join('\n')}\n`;
         }
 
-        if (status.currentStep && status.status === 'working') {
-          output += `\nCurrent: ${status.currentStep}\n`;
-        }
-
-        if (status.status === 'completed' && status.response) {
-          output += `\n--- Response ---\n${status.response}\n`;
-        } else if (status.status === 'working' && status.hasStopButton) {
-          output += `\n[Agent is working - use comet_stop to interrupt if needed]`;
+        if (status.status === 'working') {
+          output += `\n[Use comet_stop to interrupt, comet_screenshot agent_tab=true to see browser]`;
         }
 
         return { content: [{ type: "text", text: output }] };
