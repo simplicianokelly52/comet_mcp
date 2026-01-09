@@ -14,13 +14,20 @@ An MCP server that connects Claude Code to [Perplexity Comet](https://www.perple
 
 ## Why?
 
-Existing web tools for Claude Code fall short:
-- **WebSearch/WebFetch** only return static text - no interaction, no login, no dynamic content
-- **Browser automation MCPs** (like browser-use) are agentic but use a generic LLM to control a browser - less polished, more fragile
+Existing web tools for Claude Code fall into two categories, both with limitations:
 
-**Comet is Perplexity's native agentic browser** - their AI is purpose-built for web research, deeply integrated with search, and battle-tested. Give it a goal, it figures out how to get there.
+### 1. Search APIs (Tavily, Perplexity API, WebFetch)
+Return static text. No interaction, no login, no dynamic content. Great for quick lookups, but can't navigate complex sites or fill forms.
 
-**comet-mcp** bridges Claude Code and Comet: Claude's coding intelligence + Perplexity's web intelligence.
+### 2. Browser Automation (browser-use, Puppeteer MCP, Playwright MCP)
+Can interact with pages, but use a **one-agent-do-all** approach: the same reasoning model that's writing your code is also deciding where to click, what to type, and how to navigate. This overwhelms the context window and fragments focus.
+
+### 3. Comet MCP: Multi-Agent Delegation
+**Comet MCP takes a different approach.** Instead of Claude controlling a browser directly, it delegates to [Perplexity Comet](https://www.perplexity.ai/comet) - an AI purpose-built for web research and browsing.
+
+- **Claude** stays focused on your coding task
+- **Comet** handles the browsing: navigation, login walls, dynamic content, deep research
+- **Result**: Claude's coding intelligence + Perplexity's web intelligence, working together
 
 ## Quick Start
 
@@ -43,13 +50,16 @@ Add to `~/.claude.json` or `.mcp.json`:
 
 Download and install [Perplexity Comet](https://www.perplexity.ai/comet).
 
-That's it! The MCP server will automatically launch Comet with remote debugging enabled when needed. If Comet is already running, it will restart it with the correct flags.
+That's it! The MCP server automatically launches Comet with remote debugging when needed.
 
 ### 3. Use in Claude Code
 
 ```
 You: "Use Comet to research the top AI frameworks in 2025"
-Claude: [connects to Comet, delegates research, monitors progress, returns results]
+Claude: [delegates to Comet, monitors progress, returns results]
+
+You: "Log into my GitHub and check my notifications"
+Claude: [Comet handles the login flow and navigation]
 ```
 
 ## Tools
@@ -58,16 +68,19 @@ Claude: [connects to Comet, delegates research, monitors progress, returns resul
 |------|-------------|
 | `comet_connect` | Connect to Comet (auto-starts if needed) |
 | `comet_ask` | Send a task and wait for response |
-| `comet_poll` | Check task progress |
+| `comet_poll` | Check progress on long-running tasks |
 | `comet_stop` | Stop current task |
 | `comet_screenshot` | Capture current page |
 | `comet_mode` | Switch modes: search, research, labs, learn |
 
-## Architecture
+## How It Works
 
 ```
-Claude Code <-> MCP <-> comet-mcp <-> CDP <-> Comet Browser <-> Perplexity AI
+Claude Code  →  MCP Server  →  CDP  →  Comet Browser  →  Perplexity AI
+   (reasoning)     (bridge)                              (web browsing)
 ```
+
+Claude sends high-level goals ("research X", "log into Y"). Comet figures out the clicks, scrolls, and searches. Results flow back to Claude.
 
 ## Requirements
 
@@ -78,8 +91,8 @@ Claude Code <-> MCP <-> comet-mcp <-> CDP <-> Comet Browser <-> Perplexity AI
 ## Troubleshooting
 
 **"Cannot connect to Comet"**
-- Make sure Comet is installed at `/Applications/Comet.app`
-- Check if port 9222 is available (no other Chrome/debugger using it)
+- Ensure Comet is installed at `/Applications/Comet.app`
+- Check if port 9222 is available
 
 **"Tools not showing in Claude"**
 - Restart Claude Code after config changes
