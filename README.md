@@ -87,12 +87,59 @@ Claude sends high-level goals ("research X", "log into Y"). Comet figures out th
 - Node.js 18+
 - [Perplexity Comet Browser](https://www.perplexity.ai/comet)
 - Claude Code (or any MCP client)
+- **Supported platforms**: macOS, Windows, WSL2
+
+## Windows & WSL Support
+
+### Native Windows
+Works out of the box. Comet MCP auto-detects Windows and launches Comet from its default install location.
+
+### WSL2 (Windows Subsystem for Linux)
+WSL2 requires **mirrored networking** to connect to Comet running on Windows:
+
+1. **Enable mirrored networking** (one-time setup):
+   ```
+   # Create/edit %USERPROFILE%\.wslconfig (Windows side)
+   [wsl2]
+   networkingMode=mirrored
+   ```
+
+2. **Restart WSL**:
+   ```bash
+   wsl --shutdown
+   # Then reopen your WSL terminal
+   ```
+
+3. **That's it!** Comet MCP auto-detects WSL and uses PowerShell to communicate with Windows.
+
+If mirrored networking isn't available, you'll see a helpful error message with setup instructions.
+
+### Custom Comet Path
+If Comet is installed in a non-standard location:
+```json
+{
+  "mcpServers": {
+    "comet-bridge": {
+      "command": "npx",
+      "args": ["-y", "comet-mcp"],
+      "env": {
+        "COMET_PATH": "/path/to/your/Comet"
+      }
+    }
+  }
+}
+```
 
 ## Troubleshooting
 
 **"Cannot connect to Comet"**
-- Ensure Comet is installed at `/Applications/Comet.app`
+- **macOS**: Ensure Comet is installed at `/Applications/Comet.app`
+- **Windows**: Comet should be in `%LOCALAPPDATA%\Perplexity\Comet\Application\`
 - Check if port 9222 is available
+
+**"WSL cannot connect to Windows localhost"**
+- Enable mirrored networking (see WSL section above)
+- Or run Claude Code from Windows PowerShell instead of WSL
 
 **"Tools not showing in Claude"**
 - Restart Claude Code after config changes

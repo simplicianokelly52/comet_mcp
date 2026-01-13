@@ -1,7 +1,10 @@
 // CDP Client wrapper for Comet browser control
+// Supports macOS, Windows, and WSL
 
 import CDP from "chrome-remote-interface";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execSync } from "child_process";
+import { platform } from "os";
+import { existsSync } from "fs";
 import type {
   CDPTarget,
   CDPVersion,
@@ -11,8 +14,152 @@ import type {
   CometState,
 } from "./types.js";
 
-const COMET_PATH = "/Applications/Comet.app/Contents/MacOS/Comet";
+// ============ PLATFORM DETECTION ============
+
+/**
+ * Detect if running in WSL (Windows Subsystem for Linux)
+ */
+function isWSL(): boolean {
+  if (platform() !== 'linux') return false;
+  try {
+    const release = execSync('uname -r', { encoding: 'utf8' }).toLowerCase();
+    return release.includes('microsoft') || release.includes('wsl');
+  } catch {
+    return false;
+  }
+}
+
+const IS_WSL = isWSL();
+const IS_WINDOWS = platform() === "win32" || IS_WSL;
+
+/**
+ * Get the appropriate Comet executable path for the current platform
+ */
+function getCometPath(): string {
+  // Allow override via environment variable
+  if (process.env.COMET_PATH) {
+    return process.env.COMET_PATH;
+  }
+
+  const os = platform();
+
+  if (os === "darwin") {
+    return "/Applications/Comet.app/Contents/MacOS/Comet";
+  }
+
+  if (os === "win32" || IS_WSL) {
+    // Common Windows installation paths for Comet
+    const possiblePaths = [
+      `${process.env.LOCALAPPDATA}\\Perplexity\\Comet\\Application\\comet.exe`,
+      `${process.env.APPDATA}\\Perplexity\\Comet\\Application\\comet.exe`,
+      "C:\\Program Files\\Perplexity\\Comet\\Application\\comet.exe",
+      "C:\\Program Files (x86)\\Perplexity\\Comet\\Application\\comet.exe",
+    ];
+
+    for (const p of possiblePaths) {
+      if (p && existsSync(p)) {
+        return p;
+      }
+    }
+
+    // Default to LOCALAPPDATA path
+    return `${process.env.LOCALAPPDATA}\\Perplexity\\Comet\\Application\\comet.exe`;
+  }
+
+  // Fallback for other platforms
+  return "/Applications/Comet.app/Contents/MacOS/Comet";
+}
+
+const COMET_PATH = getCometPath();
 const DEFAULT_PORT = 9222;
+
+// ============ WSL NETWORK HELPERS ============
+
+/**
+ * Check if WSL can directly connect to Windows localhost (mirrored networking)
+ */
+async function canConnectToWindowsLocalhost(port: number): Promise<boolean> {
+  if (!IS_WSL) return true;
+
+  const net = await import('net');
+  return new Promise((resolve) => {
+    const client = net.createConnection({ port, host: '127.0.0.1' }, () => {
+      client.destroy();
+      resolve(true);
+    });
+    client.on('error', () => {
+      resolve(false);
+    });
+    client.setTimeout(2000, () => {
+      client.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Get the port to use for CDP WebSocket connection from WSL
+ * Throws helpful error if mirrored networking is not enabled
+ */
+async function getWSLConnectPort(targetPort: number): Promise<number> {
+  if (!IS_WSL) return targetPort;
+
+  const canConnect = await canConnectToWindowsLocalhost(targetPort);
+  if (canConnect) {
+    return targetPort;
+  }
+
+  throw new Error(
+    `WSL cannot connect to Windows localhost:${targetPort}.\n\n` +
+    `To fix this, enable WSL mirrored networking:\n` +
+    `1. Create/edit %USERPROFILE%\\.wslconfig with:\n` +
+    `   [wsl2]\n` +
+    `   networkingMode=mirrored\n` +
+    `2. Run: wsl --shutdown\n` +
+    `3. Restart WSL and try again\n\n` +
+    `Alternatively, run Claude Code from Windows PowerShell instead of WSL.`
+  );
+}
+
+/**
+ * Windows/WSL-compatible fetch using PowerShell
+ * On WSL, native fetch connects to WSL's localhost, not Windows where Comet runs
+ */
+async function windowsFetch(
+  url: string,
+  method: string = 'GET'
+): Promise<{ ok: boolean; status: number; json: () => Promise<any> }> {
+  // Use native fetch on macOS/Linux (non-WSL)
+  if (platform() !== 'win32' && !IS_WSL) {
+    const response = await fetch(url, { method });
+    return response;
+  }
+
+  // On Windows or WSL, use PowerShell to reach Windows localhost
+  try {
+    const psCommand = method === 'PUT'
+      ? `Invoke-WebRequest -Uri '${url}' -Method PUT -UseBasicParsing | Select-Object -ExpandProperty Content`
+      : `Invoke-WebRequest -Uri '${url}' -UseBasicParsing | Select-Object -ExpandProperty Content`;
+
+    const result = execSync(`powershell.exe -NoProfile -Command "${psCommand}"`, {
+      encoding: 'utf8',
+      timeout: 10000,
+      windowsHide: true,
+    });
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => JSON.parse(result.trim())
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      status: 0,
+      json: async () => { throw error; }
+    };
+  }
+}
 
 export class CometCDPClient {
   private client: CDP.Client | null = null;
@@ -28,6 +175,38 @@ export class CometCDPClient {
 
   get isConnected(): boolean {
     return this.state.connected && this.client !== null;
+  }
+
+  /**
+   * Health check - verify connection is actually alive (not just "connected" in state)
+   * This catches cases where WebSocket died silently
+   */
+  async isHealthy(): Promise<boolean> {
+    if (!this.client || !this.state.connected) return false;
+
+    try {
+      // Simple evaluation that should always work if connected
+      const result = await Promise.race([
+        this.client.Runtime.evaluate({ expression: '1+1', returnByValue: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 3000))
+      ]);
+      return (result as any)?.result?.value === 2;
+    } catch {
+      // Connection is dead
+      this.state.connected = false;
+      return false;
+    }
+  }
+
+  /**
+   * Ensure we have a healthy connection, reconnecting if needed
+   * Call this before any CDP operation
+   */
+  async ensureHealthyConnection(): Promise<void> {
+    const healthy = await this.isHealthy();
+    if (!healthy) {
+      await this.reconnect();
+    }
   }
 
   get currentState(): CometState {
@@ -161,8 +340,21 @@ export class CometCDPClient {
    */
   private async isCometProcessRunning(): Promise<boolean> {
     return new Promise((resolve) => {
-      const check = spawn('pgrep', ['-f', 'Comet.app']);
-      check.on('close', (code) => resolve(code === 0));
+      if (IS_WINDOWS) {
+        // Windows: use tasklist to check for comet.exe
+        const check = spawn('tasklist', ['/FI', 'IMAGENAME eq comet.exe', '/NH']);
+        let output = '';
+        check.stdout?.on('data', (data) => { output += data.toString(); });
+        check.on('close', () => {
+          resolve(output.toLowerCase().includes('comet.exe'));
+        });
+        check.on('error', () => resolve(false));
+      } else {
+        // macOS/Linux: use pgrep
+        const check = spawn('pgrep', ['-f', 'Comet.app']);
+        check.on('close', (code) => resolve(code === 0));
+        check.on('error', () => resolve(false));
+      }
     });
   }
 
@@ -171,18 +363,143 @@ export class CometCDPClient {
    */
   private async killComet(): Promise<void> {
     return new Promise((resolve) => {
-      const kill = spawn('pkill', ['-f', 'Comet.app']);
-      kill.on('close', () => setTimeout(resolve, 1000));
+      if (IS_WINDOWS) {
+        // Windows: use taskkill to kill comet.exe
+        const kill = spawn('taskkill', ['/F', '/IM', 'comet.exe']);
+        kill.on('close', () => setTimeout(resolve, 1000));
+        kill.on('error', () => setTimeout(resolve, 1000));
+      } else {
+        // macOS/Linux: use pkill
+        const kill = spawn('pkill', ['-f', 'Comet.app']);
+        kill.on('close', () => setTimeout(resolve, 1000));
+        kill.on('error', () => setTimeout(resolve, 1000));
+      }
     });
   }
 
   /**
    * Start Comet browser with remote debugging enabled
+   * Handles macOS, Windows, and WSL environments
    */
   async startComet(port: number = DEFAULT_PORT): Promise<string> {
     this.state.port = port;
 
-    // Check if already running with debug port
+    // ========== WSL: Use PowerShell to communicate with Windows ==========
+    if (IS_WSL) {
+      // Check if Comet is already running via PowerShell HTTP
+      try {
+        const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+        if (response.ok) {
+          const version = await response.json() as CDPVersion;
+          return `Comet already running on Windows host, port: ${port} (${version.Browser})`;
+        }
+      } catch {
+        // Comet not accessible, need to launch
+      }
+
+      // Get Windows LOCALAPPDATA path and construct Comet path
+      let cometPath = '';
+      try {
+        const localAppData = execSync('cmd.exe /c echo %LOCALAPPDATA%', { encoding: 'utf8' })
+          .trim().replace(/\r?\n/g, '');
+        cometPath = `${localAppData}\\Perplexity\\Comet\\Application\\Comet.exe`;
+      } catch {
+        cometPath = 'C:\\Users\\' + (process.env.USER || 'user') +
+          '\\AppData\\Local\\Perplexity\\Comet\\Application\\Comet.exe';
+      }
+
+      try {
+        // Launch Comet via PowerShell (Set-Location avoids UNC path issues)
+        const psCommand = `Set-Location C:\\; Start-Process -FilePath '${cometPath}' -ArgumentList '--remote-debugging-port=${port}'`;
+        spawn('powershell.exe', ['-NoProfile', '-Command', psCommand], {
+          detached: true,
+          stdio: 'ignore',
+        }).unref();
+
+        // Wait for Comet to start
+        return new Promise((resolve, reject) => {
+          const maxAttempts = 40;
+          let attempts = 0;
+
+          const checkReady = async () => {
+            attempts++;
+            try {
+              const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+              if (response.ok) {
+                resolve(`Comet started via WSL->PowerShell on port ${port}`);
+                return;
+              }
+            } catch { /* keep trying */ }
+
+            if (attempts < maxAttempts) {
+              setTimeout(checkReady, 500);
+            } else {
+              reject(new Error(
+                `Timeout waiting for Comet. Tried to launch: ${cometPath}\n` +
+                `Try manually: powershell.exe -Command "Start-Process '${cometPath}' -ArgumentList '--remote-debugging-port=${port}'"`
+              ));
+            }
+          };
+
+          setTimeout(checkReady, 2000);
+        });
+      } catch (launchError) {
+        throw new Error(
+          `Cannot connect to or launch Comet browser.\n` +
+          `Tried path: ${cometPath}\n` +
+          `Error: ${launchError instanceof Error ? launchError.message : String(launchError)}`
+        );
+      }
+    }
+
+    // ========== Native Windows: Use windowsFetch for HTTP ==========
+    if (platform() === 'win32') {
+      try {
+        const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+        if (response.ok) {
+          const version = await response.json() as CDPVersion;
+          return `Comet already running with debug port: ${version.Browser}`;
+        }
+      } catch {
+        const isRunning = await this.isCometProcessRunning();
+        if (isRunning) {
+          await this.killComet();
+        }
+      }
+
+      // Start Comet on Windows
+      return new Promise((resolve, reject) => {
+        this.cometProcess = spawn(COMET_PATH, [`--remote-debugging-port=${port}`], {
+          detached: true,
+          stdio: "ignore",
+        });
+        this.cometProcess.unref();
+
+        const maxAttempts = 40;
+        let attempts = 0;
+
+        const checkReady = async () => {
+          attempts++;
+          try {
+            const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+            if (response.ok) {
+              resolve(`Comet started with debug port ${port}`);
+              return;
+            }
+          } catch { /* keep trying */ }
+
+          if (attempts < maxAttempts) {
+            setTimeout(checkReady, 500);
+          } else {
+            reject(new Error(`Timeout waiting for Comet. Try: "${COMET_PATH}" --remote-debugging-port=${port}`));
+          }
+        };
+
+        setTimeout(checkReady, 1500);
+      });
+    }
+
+    // ========== macOS/Linux: Original approach ==========
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -200,7 +517,7 @@ export class CometCDPClient {
       }
     }
 
-    // Start Comet
+    // Start Comet on macOS/Linux
     return new Promise((resolve, reject) => {
       this.cometProcess = spawn(COMET_PATH, [`--remote-debugging-port=${port}`], {
         detached: true,
@@ -241,7 +558,7 @@ export class CometCDPClient {
    * Get CDP version info
    */
   async getVersion(): Promise<CDPVersion> {
-    const response = await fetch(`http://localhost:${this.state.port}/json/version`);
+    const response = await windowsFetch(`http://127.0.0.1:${this.state.port}/json/version`);
     if (!response.ok) throw new Error(`Failed to get version: ${response.status}`);
     return response.json() as Promise<CDPVersion>;
   }
@@ -250,7 +567,7 @@ export class CometCDPClient {
    * List all available tabs/targets
    */
   async listTargets(): Promise<CDPTarget[]> {
-    const response = await fetch(`http://localhost:${this.state.port}/json/list`);
+    const response = await windowsFetch(`http://127.0.0.1:${this.state.port}/json/list`);
     if (!response.ok) throw new Error(`Failed to list targets: ${response.status}`);
     return response.json() as Promise<CDPTarget[]>;
   }
@@ -263,7 +580,10 @@ export class CometCDPClient {
       await this.disconnect();
     }
 
-    const options: CDP.Options = { port: this.state.port };
+    // On WSL, verify mirrored networking is available for WebSocket connection
+    const connectPort = await getWSLConnectPort(this.state.port);
+
+    const options: CDP.Options = { port: connectPort, host: '127.0.0.1' };
     if (targetId) options.target = targetId;
 
     this.client = await CDP(options);
@@ -346,8 +666,12 @@ export class CometCDPClient {
 
   /**
    * Execute JavaScript with auto-reconnect on connection loss
+   * This is the PREFERRED method - always use this instead of evaluate()
    */
   async safeEvaluate(expression: string): Promise<EvaluateResult> {
+    // Always check health first to catch silently dead connections
+    await this.ensureHealthyConnection();
+
     return this.withAutoReconnect(async () => {
       this.ensureConnected();
       return this.client!.Runtime.evaluate({
@@ -371,9 +695,9 @@ export class CometCDPClient {
    * Create a new tab
    */
   async newTab(url?: string): Promise<CDPTarget> {
-    const response = await fetch(
-      `http://localhost:${this.state.port}/json/new${url ? `?${url}` : ""}`,
-      { method: 'PUT' }
+    const response = await windowsFetch(
+      `http://127.0.0.1:${this.state.port}/json/new${url ? `?${url}` : ""}`,
+      'PUT'
     );
     if (!response.ok) throw new Error(`Failed to create new tab: ${response.status}`);
     return response.json() as Promise<CDPTarget>;
@@ -391,7 +715,7 @@ export class CometCDPClient {
     } catch { /* fallback to HTTP */ }
 
     try {
-      const response = await fetch(`http://localhost:${this.state.port}/json/close/${targetId}`);
+      const response = await windowsFetch(`http://127.0.0.1:${this.state.port}/json/close/${targetId}`);
       return response.ok;
     } catch {
       return false;
