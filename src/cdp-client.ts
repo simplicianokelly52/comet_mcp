@@ -896,6 +896,14 @@ export class CometCDPClient {
   }
 
   /**
+   * Insert text at the current focus (uses CDP Input.insertText)
+   */
+  async insertText(text: string): Promise<void> {
+    this.ensureConnected();
+    await this.client!.Input.insertText({ text });
+  }
+
+  /**
    * Create a new tab
    */
   async newTab(url?: string): Promise<CDPTarget> {

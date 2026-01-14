@@ -38,32 +38,32 @@ export class CometAI {
       throw new Error("Could not find input element. Navigate to Perplexity first.");
     }
 
-    // Use execCommand for contenteditable elements (works with React/Vue)
-    const result = await cometClient.evaluate(`
+    // Focus the input element
+    const focused = await cometClient.evaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]');
         if (el) {
           el.focus();
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, ${JSON.stringify(prompt)});
-          return { success: true };
+          // Clear existing content
+          el.innerHTML = '';
+          return { type: 'contenteditable' };
         }
-        // Fallback for textarea
         const textarea = document.querySelector('textarea');
         if (textarea) {
           textarea.focus();
-          textarea.value = ${JSON.stringify(prompt)};
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          return { success: true };
+          textarea.value = '';
+          return { type: 'textarea' };
         }
-        return { success: false };
+        return null;
       })()
     `);
 
-    const typed = (result.result.value as { success: boolean })?.success;
-    if (!typed) {
-      throw new Error("Failed to type into input element");
+    if (!focused.result.value) {
+      throw new Error("Failed to focus input element");
     }
+
+    // Use CDP Input.insertText for reliable text insertion
+    await cometClient.insertText(prompt);
 
     // Submit the prompt
     await this.submitPrompt();
