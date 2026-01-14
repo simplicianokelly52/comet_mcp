@@ -657,12 +657,40 @@ export class CometCDPClient {
 
     for (let retry = 0; retry < maxRetries; retry++) {
       try {
-        // Start MCP Comet with isolated profile
-        this.cometProcess = spawn(COMET_PATH, launchArgs, {
-          detached: true,
-          stdio: "ignore",
-        });
-        this.cometProcess.unref();
+        // On macOS, use a SEPARATE app bundle to truly isolate from personal Comet
+        // This bypasses Electron's single-instance lock by being a "different app"
+        if (platform() === 'darwin') {
+          const mcpAppPath = `${process.env.HOME}/.comet-mcp/Comet-MCP.app`;
+          const mcpAppExists = existsSync(mcpAppPath);
+
+          if (mcpAppExists) {
+            // Use the MCP-specific Comet app (different bundle ID = truly separate)
+            this.cometProcess = spawn('open', [
+              '-a', mcpAppPath,
+              '--args',
+              ...launchArgs,
+            ], {
+              detached: true,
+              stdio: 'ignore',
+            });
+            this.cometProcess.unref();
+          } else {
+            // Fallback: try direct spawn (may interfere with personal Comet)
+            console.error('Warning: ~/.comet-mcp/Comet-MCP.app not found. Run setup first.');
+            this.cometProcess = spawn(COMET_PATH, launchArgs, {
+              detached: true,
+              stdio: "ignore",
+            });
+            this.cometProcess.unref();
+          }
+        } else {
+          // Linux: use direct spawn
+          this.cometProcess = spawn(COMET_PATH, launchArgs, {
+            detached: true,
+            stdio: "ignore",
+          });
+          this.cometProcess.unref();
+        }
 
         const result = await new Promise<string>((resolve, reject) => {
           const maxAttempts = 60;
