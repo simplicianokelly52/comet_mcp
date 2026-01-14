@@ -23,11 +23,11 @@ fi
 MCP_APP="$HOME/.comet-mcp/Comet-MCP.app"
 
 # Create directory
-echo "[1/5] Creating ~/.comet-mcp directory..."
+echo "[1/6] Creating ~/.comet-mcp directory..."
 mkdir -p "$HOME/.comet-mcp"
 
 # Copy app
-echo "[2/5] Copying Comet.app to Comet-MCP.app..."
+echo "[2/6] Copying Comet.app to Comet-MCP.app..."
 if [ -d "$MCP_APP" ]; then
   echo "      (Removing existing installation)"
   rm -rf "$MCP_APP"
@@ -35,32 +35,44 @@ fi
 cp -R "/Applications/Comet.app" "$MCP_APP"
 
 # Change bundle ID
-echo "[3/5] Setting unique bundle ID..."
+echo "[3/6] Setting unique bundle ID..."
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ai.perplexity.comet.mcp" \
   "$MCP_APP/Contents/Info.plist"
 
-# Download icon
-echo "[4/5] Downloading custom MCP icon..."
+# Download and apply icon
+echo "[4/6] Downloading custom MCP icon..."
 ICON_URL="https://raw.githubusercontent.com/hanzili/comet-mcp/main/assets/comet-mcp.icns"
-ICON_PATH="$MCP_APP/Contents/Resources/app.icns"
+ICON_TMP="/tmp/comet-mcp-icon.icns"
 
-# Try to download, check if valid (icns files start with "icns")
-if curl -sL "$ICON_URL" -o /tmp/comet-mcp-icon.icns 2>/dev/null; then
-  if head -c 4 /tmp/comet-mcp-icon.icns | grep -q "icns"; then
-    cp /tmp/comet-mcp-icon.icns "$ICON_PATH"
-    cp /tmp/comet-mcp-icon.icns "$MCP_APP/Contents/Resources/electron.icns"
-    echo "      ✓ Custom icon installed"
+if curl -sL "$ICON_URL" -o "$ICON_TMP" 2>/dev/null; then
+  # Verify it's a valid icns (starts with 'icns' magic bytes)
+  if head -c 4 "$ICON_TMP" 2>/dev/null | grep -q "icns"; then
+    cp "$ICON_TMP" "$MCP_APP/Contents/Resources/app.icns"
+    cp "$ICON_TMP" "$MCP_APP/Contents/Resources/electron.icns"
+    echo "      ✓ Icon files installed"
   else
-    echo "      (Using default icon - download failed)"
+    echo "      (Using default icon)"
   fi
-  rm -f /tmp/comet-mcp-icon.icns
-else
-  echo "      (Using default icon - network error)"
+  rm -f "$ICON_TMP"
 fi
 
 # Re-sign
-echo "[5/5] Re-signing app..."
+echo "[5/6] Re-signing app..."
 codesign --force --deep --sign - "$MCP_APP" 2>/dev/null
+
+# Set custom icon using AppleScript (most reliable method)
+echo "[6/6] Setting app icon..."
+osascript << EOF 2>/dev/null || true
+use framework "Foundation"
+use framework "AppKit"
+set iconPath to "$MCP_APP/Contents/Resources/app.icns"
+set appPath to "$MCP_APP"
+set iconImage to current application's NSImage's alloc()'s initWithContentsOfFile:iconPath
+current application's NSWorkspace's sharedWorkspace()'s setIcon:iconImage forFile:appPath options:0
+EOF
+
+# Refresh Finder
+killall Finder 2>/dev/null || true
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
