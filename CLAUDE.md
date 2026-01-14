@@ -28,6 +28,7 @@ Claude Code → MCP Server (index.ts) → CometAI (comet-ai.ts) → CDP Client (
 **Isolated MCP Instance (NEW in v3.0)**:
 - Uses port 9223 (not 9222) to avoid conflicts with personal Comet
 - Separate data directory: `~/.comet-mcp` (macOS/Linux) or `%LOCALAPPDATA%\comet-mcp` (Windows)
+- **macOS**: Requires separate app bundle at `~/.comet-mcp/Comet-MCP.app` (see README setup instructions)
 - Visual indicator: "[MCP]" in title + badge on page
 - First launch prompts for Perplexity login
 

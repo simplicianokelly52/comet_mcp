@@ -60,7 +60,31 @@ Add to `~/.claude.json` or `.mcp.json`:
 
 Download and install [Perplexity Comet](https://www.perplexity.ai/comet).
 
-That's it! The MCP server automatically launches a dedicated Comet instance for MCP use.
+### macOS: Create Isolated App Bundle (One-time)
+
+On macOS, create a separate app bundle to run MCP Comet alongside your personal Comet:
+
+```bash
+# Create the MCP-specific Comet app
+MCP_APP="$HOME/.comet-mcp/Comet-MCP.app"
+mkdir -p "$HOME/.comet-mcp"
+cp -R "/Applications/Comet.app" "$MCP_APP"
+
+# Change bundle ID to make it a "different" app
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ai.perplexity.comet.mcp" "$MCP_APP/Contents/Info.plist"
+
+# Re-sign (required after modifying the app)
+find "$MCP_APP" -name "*.dylib" -exec codesign --force --sign - {} \;
+find "$MCP_APP" -name "*.so" -exec codesign --force --sign - {} \;
+find "$MCP_APP" -type d -name "*.framework" | while read -r fw; do
+  codesign --force --sign - "$fw"
+done
+codesign --force --deep --sign - "$MCP_APP"
+```
+
+This creates `~/.comet-mcp/Comet-MCP.app` with a different bundle ID, allowing it to run truly separately from your personal Comet.
+
+That's it! The MCP server automatically launches the dedicated Comet instance for MCP use.
 
 ### 3. First-Time Setup
 
@@ -159,9 +183,13 @@ If Comet is installed in a non-standard location:
 ## Troubleshooting
 
 **"Cannot connect to Comet"**
-- **macOS**: Ensure Comet is installed at `/Applications/Comet.app`
+- **macOS**: Ensure Comet is installed at `/Applications/Comet.app` and you've run the one-time setup to create `~/.comet-mcp/Comet-MCP.app`
 - **Windows**: Comet should be in `%LOCALAPPDATA%\Perplexity\Comet\Application\`
 - MCP uses port 9223 (not 9222) - check if available
+
+**"MCP Comet closes my personal Comet" (macOS)**
+- You need to create the separate app bundle first (see "macOS: Create Isolated App Bundle" above)
+- Without this, Electron's single-instance lock will replace your personal browser
 
 **"Not logged in" message**
 - Log into Perplexity in the MCP Comet browser window (the one with [MCP] badge)
