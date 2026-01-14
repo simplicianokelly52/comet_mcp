@@ -1,28 +1,71 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Background circle - Claude orange/coral -->
-  <circle cx="256" cy="256" r="240" fill="#D97757"/>
-
-  <!-- Comet tail - gradient -->
   <defs>
-    <linearGradient id="tailGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:0"/>
-      <stop offset="100%" style="stop-color:#FFFFFF;stop-opacity:0.8"/>
+    <!-- Gradient for comet trail -->
+    <linearGradient id="cometTrail" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#D946EF;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#3B82F6;stop-opacity:0.3" />
     </linearGradient>
+
+    <!-- Anthropic coral/orange gradient -->
+    <linearGradient id="anthropicGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF8C42" />
+      <stop offset="100%" style="stop-color:#E85D04" />
+    </linearGradient>
+
+    <!-- MCP connection blue -->
+    <linearGradient id="mcpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#60A5FA" />
+      <stop offset="100%" style="stop-color:#3B82F6" />
+    </linearGradient>
+
+    <!-- Glow effect -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
 
-  <!-- Comet body - stylized -->
-  <ellipse cx="280" cy="256" rx="120" ry="80" fill="#FFFFFF"/>
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="#1a1a2e"/>
+  <circle cx="256" cy="256" r="230" fill="#16213e" stroke="#3B82F6" stroke-width="2"/>
 
-  <!-- Comet tail -->
-  <path d="M160 256 Q80 256 40 240 Q80 280 160 256" fill="url(#tailGrad)"/>
-  <path d="M160 240 Q60 230 20 200 Q70 260 160 256" fill="url(#tailGrad)" opacity="0.6"/>
-  <path d="M160 272 Q60 282 20 312 Q70 252 160 256" fill="url(#tailGrad)" opacity="0.6"/>
+  <!-- Comet trail (curved arc) -->
+  <path d="M 380 120 Q 450 200 420 300 Q 380 420 280 450"
+        stroke="url(#cometTrail)" stroke-width="40" fill="none"
+        stroke-linecap="round" opacity="0.6"/>
+  <path d="M 360 140 Q 420 210 390 290 Q 350 380 270 410"
+        stroke="url(#cometTrail)" stroke-width="25" fill="none"
+        stroke-linecap="round" opacity="0.8"/>
 
-  <!-- Anthropic 'A' hint in comet -->
-  <path d="M240 200 L280 310 L320 200 M255 270 L305 270"
-        stroke="#D97757" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- MCP Bridge symbol (three connected nodes) -->
+  <g filter="url(#glow)">
+    <!-- Left node (Claude/Anthropic) -->
+    <circle cx="140" cy="260" r="35" fill="url(#anthropicGrad)"/>
+    <text x="140" y="270" text-anchor="middle" fill="white" font-size="32" font-weight="bold" font-family="Arial">A</text>
 
-  <!-- MCP indicator dot -->
-  <circle cx="400" cy="140" r="40" fill="#1a1a2e"/>
-  <text x="400" y="152" text-anchor="middle" fill="white" font-family="sans-serif" font-size="32" font-weight="bold">M</text>
+    <!-- Center node (MCP) -->
+    <circle cx="256" cy="200" r="40" fill="url(#mcpGrad)"/>
+    <text x="256" y="212" text-anchor="middle" fill="white" font-size="24" font-weight="bold" font-family="Arial">MCP</text>
+
+    <!-- Right node (Comet head) -->
+    <circle cx="370" cy="260" r="45" fill="#D946EF" filter="url(#glow)"/>
+    <circle cx="370" cy="260" r="35" fill="#F0ABFC"/>
+    <!-- Comet sparkle -->
+    <path d="M 370 235 L 375 255 L 395 260 L 375 265 L 370 285 L 365 265 L 345 260 L 365 255 Z" fill="white" opacity="0.9"/>
+  </g>
+
+  <!-- Connection lines -->
+  <line x1="175" y1="245" x2="216" y2="215" stroke="#60A5FA" stroke-width="4" stroke-linecap="round"/>
+  <line x1="296" y1="215" x2="335" y2="245" stroke="#60A5FA" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Data flow dots on connections -->
+  <circle cx="195" cy="230" r="4" fill="#60A5FA"/>
+  <circle cx="315" cy="230" r="4" fill="#D946EF"/>
+
+  <!-- "MCP" label at bottom -->
+  <text x="256" y="380" text-anchor="middle" fill="#60A5FA" font-size="36" font-weight="bold" font-family="Arial" letter-spacing="8">[MCP]</text>
 </svg>

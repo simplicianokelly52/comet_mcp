@@ -73,6 +73,11 @@ cp -R "/Applications/Comet.app" "$MCP_APP"
 # Change bundle ID to make it a "different" app
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ai.perplexity.comet.mcp" "$MCP_APP/Contents/Info.plist"
 
+# Download and apply custom MCP icon (distinguishes from personal Comet)
+curl -sL "https://raw.githubusercontent.com/hanzili/comet-mcp/main/assets/comet-mcp.icns" \
+  -o "$MCP_APP/Contents/Resources/app.icns"
+cp "$MCP_APP/Contents/Resources/app.icns" "$MCP_APP/Contents/Resources/electron.icns"
+
 # Re-sign (required after modifying the app)
 find "$MCP_APP" -name "*.dylib" -exec codesign --force --sign - {} \;
 find "$MCP_APP" -name "*.so" -exec codesign --force --sign - {} \;
@@ -82,7 +87,7 @@ done
 codesign --force --deep --sign - "$MCP_APP"
 ```
 
-This creates `~/.comet-mcp/Comet-MCP.app` with a different bundle ID, allowing it to run truly separately from your personal Comet.
+This creates `~/.comet-mcp/Comet-MCP.app` with a different bundle ID and custom icon (MCP + Anthropic + Comet), allowing it to run truly separately from your personal Comet.
 
 That's it! The MCP server automatically launches the dedicated Comet instance for MCP use.
 
