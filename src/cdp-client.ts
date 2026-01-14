@@ -443,9 +443,19 @@ export class CometCDPClient {
     }
 
     // Common launch arguments for isolated MCP instance
+    // CRITICAL: These flags ensure a truly separate Comet instance
     const launchArgs = [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${MCP_DATA_DIR}`,
+      // Force new instance even if another Comet is running
+      '--no-first-run',
+      '--no-default-browser-check',
+      // Disable single-instance lock (Electron apps)
+      '--disable-features=SingleInstanceCheck',
+      // Allow multiple instances
+      '--class=comet-mcp',
+      // Start with clean session
+      '--new-window',
     ];
 
     // ========== WSL: Use PowerShell to communicate with Windows ==========
@@ -744,20 +754,15 @@ export class CometCDPClient {
       this.client.Network.enable(),
     ]);
 
-    // Set window size for consistent UI
+    // Ensure window is visible and usable (don't force specific size - let user resize)
     try {
       const { windowId } = await (this.client as any).Browser.getWindowForTarget({ targetId });
+      // Just ensure window is in normal state (not minimized), don't restrict size
       await (this.client as any).Browser.setWindowBounds({
         windowId,
-        bounds: { width: 1440, height: 900, windowState: 'normal' },
+        bounds: { windowState: 'normal' },
       });
-    } catch {
-      try {
-        await (this.client as any).Emulation.setDeviceMetricsOverride({
-          width: 1440, height: 900, deviceScaleFactor: 1, mobile: false,
-        });
-      } catch { /* continue */ }
-    }
+    } catch { /* continue - window management not critical */ }
 
     this.state.connected = true;
     this.state.activeTabId = targetId;
