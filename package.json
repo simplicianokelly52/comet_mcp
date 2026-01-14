@@ -1,6 +1,6 @@
 {
   "name": "comet-mcp",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "description": "MCP Server that gives Claude Code superpowers with Perplexity Comet browser - agentic web browsing, deep research, and real-time monitoring",
   "type": "module",
   "main": "dist/index.js",

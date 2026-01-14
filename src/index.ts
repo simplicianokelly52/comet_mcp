@@ -62,10 +62,41 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "comet_folders",
+    description: "Manage research folders in Perplexity. List existing folders, create new ones, or save current research to a folder.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "create", "save"],
+          description: "Action: 'list' folders, 'create' new folder, 'save' current research to folder",
+        },
+        name: {
+          type: "string",
+          description: "Folder name (required for 'create' and 'save' actions)",
+        },
+      },
+    },
+  },
+  {
+    name: "comet_library",
+    description: "Search your Perplexity library for existing research. Returns past research threads matching your query.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query to find past research",
+        },
+      },
+    },
+  },
 ];
 
 const server = new Server(
-  { name: "comet-bridge", version: "2.2.0" },
+  { name: "comet-bridge", version: "3.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -77,8 +108,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "comet_connect": {
-        // Auto-start Comet with debug port (will restart if running without it)
-        const startResult = await cometClient.startComet(9222);
+        // Auto-start MCP-dedicated Comet instance (separate from user's browser)
+        const startResult = await cometClient.startComet();
 
         // Get all tabs and clean up - close all except one
         const targets = await cometClient.listTargets();
@@ -97,19 +128,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const freshTargets = await cometClient.listTargets();
         const anyPage = freshTargets.find(t => t.type === 'page');
 
+        let connectionMsg = startResult;
+
         if (anyPage) {
           await cometClient.connect(anyPage.id);
           // Always navigate to Perplexity home for clean state
           await cometClient.navigate("https://www.perplexity.ai/", true);
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)` }] };
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          connectionMsg += `\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)`;
+        } else {
+          // No tabs at all - create a new one
+          const newTab = await cometClient.newTab("https://www.perplexity.ai/");
+          await new Promise(resolve => setTimeout(resolve, 2500)); // Wait for page load
+          await cometClient.connect(newTab.id);
+          connectionMsg += `\nCreated new tab and navigated to Perplexity`;
         }
 
-        // No tabs at all - create a new one
-        const newTab = await cometClient.newTab("https://www.perplexity.ai/");
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for page load
-        await cometClient.connect(newTab.id);
-        return { content: [{ type: "text", text: `${startResult}\nCreated new tab and navigated to Perplexity` }] };
+        // Check login status for first-time setup
+        const loginStatus = await cometAI.isLoggedIn();
+        if (!loginStatus.loggedIn) {
+          return {
+            content: [{
+              type: "text",
+              text: connectionMsg + '\n\n⚠️ ' + loginStatus.message
+            }]
+          };
+        }
+
+        return { content: [{ type: "text", text: connectionMsg + '\n✓ Logged in and ready.' }] };
       }
 
       case "comet_ask": {
@@ -419,6 +465,276 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           };
         }
+      }
+
+      case "comet_folders": {
+        const action = (args?.action as string) || "list";
+        const folderName = args?.name as string;
+
+        if (action === "list") {
+          // Navigate to library and extract folders
+          await cometClient.navigate("https://www.perplexity.ai/library", true);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          const result = await cometClient.evaluate(`
+            (() => {
+              const folders = [];
+              // Look for folder elements in the library sidebar/UI
+              const folderEls = document.querySelectorAll('[data-testid*="folder"], [class*="folder"], a[href*="/collection/"]');
+              for (const el of folderEls) {
+                const name = el.textContent?.trim();
+                const href = el.getAttribute('href') || '';
+                if (name && name.length > 0 && name.length < 100) {
+                  folders.push({ name, href });
+                }
+              }
+
+              // Also check sidebar navigation
+              const sidebarLinks = document.querySelectorAll('nav a, aside a');
+              for (const link of sidebarLinks) {
+                const text = link.textContent?.trim();
+                const href = link.getAttribute('href') || '';
+                if (href.includes('/collection/') && text) {
+                  folders.push({ name: text, href });
+                }
+              }
+
+              // Deduplicate
+              const seen = new Set();
+              return folders.filter(f => {
+                if (seen.has(f.name)) return false;
+                seen.add(f.name);
+                return true;
+              });
+            })()
+          `);
+
+          const folders = result.result.value as { name: string; href: string }[];
+
+          if (folders.length === 0) {
+            return { content: [{ type: "text", text: "No folders found. Create one using comet_folders with action: 'create'" }] };
+          }
+
+          let output = `Found ${folders.length} folder(s):\n`;
+          for (const folder of folders) {
+            output += `  • ${folder.name}\n`;
+          }
+          return { content: [{ type: "text", text: output }] };
+        }
+
+        if (action === "create") {
+          if (!folderName) {
+            return { content: [{ type: "text", text: "Error: 'name' is required for create action" }], isError: true };
+          }
+
+          // Navigate to library and create folder
+          await cometClient.navigate("https://www.perplexity.ai/library", true);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          const result = await cometClient.evaluate(`
+            (() => {
+              // Look for "New folder" or "Create folder" button
+              const createBtns = document.querySelectorAll('button');
+              for (const btn of createBtns) {
+                const text = btn.textContent?.toLowerCase() || '';
+                if (text.includes('new folder') || text.includes('create folder') || text.includes('add folder')) {
+                  btn.click();
+                  return { clicked: true };
+                }
+              }
+
+              // Try the + button
+              for (const btn of createBtns) {
+                if (btn.querySelector('svg') && btn.getAttribute('aria-label')?.toLowerCase().includes('add')) {
+                  btn.click();
+                  return { clicked: true };
+                }
+              }
+
+              return { clicked: false, error: 'Create folder button not found' };
+            })()
+          `);
+
+          const clickResult = result.result.value as { clicked: boolean; error?: string };
+
+          if (!clickResult.clicked) {
+            return { content: [{ type: "text", text: `Could not create folder: ${clickResult.error}. Try creating it manually in Perplexity.` }], isError: true };
+          }
+
+          // Wait for dialog and enter folder name
+          await new Promise(resolve => setTimeout(resolve, 500));
+          await cometClient.evaluate(`
+            (() => {
+              const input = document.querySelector('input[type="text"], input[placeholder*="folder"], input[placeholder*="name"]');
+              if (input) {
+                input.value = '${folderName.replace(/'/g, "\\'")}';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+            })()
+          `);
+
+          // Click confirm/create button
+          await new Promise(resolve => setTimeout(resolve, 300));
+          await cometClient.evaluate(`
+            (() => {
+              const btns = document.querySelectorAll('button');
+              for (const btn of btns) {
+                const text = btn.textContent?.toLowerCase() || '';
+                if (text.includes('create') || text.includes('save') || text.includes('confirm')) {
+                  btn.click();
+                  break;
+                }
+              }
+            })()
+          `);
+
+          return { content: [{ type: "text", text: `Created folder: ${folderName}` }] };
+        }
+
+        if (action === "save") {
+          if (!folderName) {
+            return { content: [{ type: "text", text: "Error: 'name' is required to specify which folder to save to" }], isError: true };
+          }
+
+          // Try to save current thread to folder via UI
+          const result = await cometClient.evaluate(`
+            (() => {
+              // Look for save/bookmark/add to folder button
+              const btns = document.querySelectorAll('button');
+              for (const btn of btns) {
+                const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                const text = (btn.textContent || '').toLowerCase();
+                if (label.includes('save') || label.includes('bookmark') || label.includes('add to') ||
+                    text.includes('save') || text.includes('bookmark')) {
+                  btn.click();
+                  return { clicked: true };
+                }
+              }
+              return { clicked: false, error: 'Save button not found' };
+            })()
+          `);
+
+          const saveResult = result.result.value as { clicked: boolean; error?: string };
+
+          if (!saveResult.clicked) {
+            return { content: [{ type: "text", text: `Could not save: ${saveResult.error}` }], isError: true };
+          }
+
+          // Wait for folder picker and select folder
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const selectResult = await cometClient.evaluate(`
+            (() => {
+              // Look for folder in the picker
+              const items = document.querySelectorAll('[role="menuitem"], [role="option"], button, a');
+              for (const item of items) {
+                if (item.textContent?.includes('${folderName.replace(/'/g, "\\'")}')) {
+                  item.click();
+                  return { selected: true };
+                }
+              }
+              return { selected: false, error: 'Folder not found in picker' };
+            })()
+          `);
+
+          const selectRes = selectResult.result.value as { selected: boolean; error?: string };
+
+          if (selectRes.selected) {
+            return { content: [{ type: "text", text: `Saved to folder: ${folderName}` }] };
+          } else {
+            return { content: [{ type: "text", text: `Could not select folder: ${selectRes.error}` }], isError: true };
+          }
+        }
+
+        return { content: [{ type: "text", text: `Unknown action: ${action}. Use 'list', 'create', or 'save'` }], isError: true };
+      }
+
+      case "comet_library": {
+        const query = args?.query as string;
+
+        // Navigate to library
+        await cometClient.navigate("https://www.perplexity.ai/library", true);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        if (query) {
+          // Try to find and use search input
+          const searchResult = await cometClient.evaluate(`
+            (() => {
+              const searchInputs = document.querySelectorAll('input[type="search"], input[placeholder*="search"], input[placeholder*="Search"]');
+              for (const input of searchInputs) {
+                input.value = '${query.replace(/'/g, "\\'")}';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                return { searched: true };
+              }
+              return { searched: false };
+            })()
+          `);
+
+          const searched = (searchResult.result.value as { searched: boolean }).searched;
+          if (searched) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+        }
+
+        // Extract library items
+        const result = await cometClient.evaluate(`
+          (() => {
+            const items = [];
+            // Look for thread/research items
+            const threadEls = document.querySelectorAll('[data-testid*="thread"], [class*="thread"], a[href*="/search/"], a[href*="/thread/"]');
+
+            for (const el of threadEls) {
+              const title = el.querySelector('h2, h3, [class*="title"]')?.textContent?.trim() ||
+                           el.textContent?.substring(0, 100).trim();
+              const href = el.getAttribute('href') || el.querySelector('a')?.getAttribute('href') || '';
+
+              if (title && title.length > 2) {
+                items.push({
+                  title: title.substring(0, 150),
+                  url: href.startsWith('/') ? 'https://www.perplexity.ai' + href : href
+                });
+              }
+            }
+
+            // Also check for card-like elements
+            const cards = document.querySelectorAll('[class*="card"], [class*="item"], article');
+            for (const card of cards) {
+              const link = card.querySelector('a');
+              const title = card.querySelector('h2, h3, [class*="title"]')?.textContent?.trim();
+              if (title && link) {
+                const href = link.getAttribute('href') || '';
+                items.push({
+                  title: title.substring(0, 150),
+                  url: href.startsWith('/') ? 'https://www.perplexity.ai' + href : href
+                });
+              }
+            }
+
+            // Deduplicate
+            const seen = new Set();
+            return items.filter(i => {
+              const key = i.title;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            }).slice(0, 20);
+          })()
+        `);
+
+        const items = result.result.value as { title: string; url: string }[];
+
+        if (items.length === 0) {
+          return { content: [{ type: "text", text: query ? `No research found matching: "${query}"` : "No research found in library" }] };
+        }
+
+        let output = query ? `Found ${items.length} result(s) for "${query}":\n\n` : `Library contains ${items.length} item(s):\n\n`;
+        for (const item of items) {
+          output += `• ${item.title}\n`;
+          if (item.url) output += `  ${item.url}\n`;
+          output += '\n';
+        }
+
+        return { content: [{ type: "text", text: output }] };
       }
 
       default:

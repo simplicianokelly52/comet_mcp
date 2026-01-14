@@ -12,6 +12,16 @@ An MCP server that connects Claude Code to [Perplexity Comet](https://www.perple
 
 ![Demo](demo.gif)
 
+## What's New in v3.0
+
+- **Isolated MCP Instance** - Uses a dedicated Comet browser (port 9223) - your personal tabs are never touched
+- **Full Research Text** - Fixed truncation issue, now returns complete research responses
+- **Reliable Startup** - Auto-retry logic, kills stale processes, extended timeouts
+- **Login Detection** - First-time setup prompts for Perplexity sign-in
+- **Visual Indicator** - MCP Comet shows "[MCP]" badge so you know which browser is which
+- **Research Folders** - Save and organize research into folders
+- **Library Search** - Search your existing Perplexity research history
+
 ## Why?
 
 Existing web tools for Claude Code fall into two categories, both with limitations:
@@ -50,9 +60,16 @@ Add to `~/.claude.json` or `.mcp.json`:
 
 Download and install [Perplexity Comet](https://www.perplexity.ai/comet).
 
-That's it! The MCP server automatically launches Comet with remote debugging when needed.
+That's it! The MCP server automatically launches a dedicated Comet instance for MCP use.
 
-### 3. Use in Claude Code
+### 3. First-Time Setup
+
+On first `comet_connect`, if not logged in:
+1. The MCP Comet browser window will open
+2. Log into your Perplexity account
+3. Call `comet_connect` again - you're ready!
+
+### 4. Use in Claude Code
 
 ```
 You: "Use Comet to research the top AI frameworks in 2025"
@@ -60,25 +77,34 @@ Claude: [delegates to Comet, monitors progress, returns results]
 
 You: "Log into my GitHub and check my notifications"
 Claude: [Comet handles the login flow and navigation]
+
+You: "Save this research to my 'AI Projects' folder"
+Claude: [uses comet_folders to organize research]
 ```
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `comet_connect` | Connect to Comet (auto-starts if needed) |
+| `comet_connect` | Connect to MCP-dedicated Comet (auto-starts, isolated from personal browser) |
 | `comet_ask` | Send a task and wait for response |
 | `comet_poll` | Check progress on long-running tasks |
 | `comet_stop` | Stop current task |
 | `comet_screenshot` | Capture current page |
 | `comet_mode` | Switch modes: search, research, labs, learn |
+| `comet_folders` | List, create, or save to research folders |
+| `comet_library` | Search your existing Perplexity research |
 
 ## How It Works
 
 ```
-Claude Code  →  MCP Server  →  CDP  →  Comet Browser  →  Perplexity AI
-   (reasoning)     (bridge)                              (web browsing)
+Claude Code  →  MCP Server  →  CDP (port 9223)  →  MCP Comet  →  Perplexity AI
+   (reasoning)     (bridge)                         (isolated)    (web browsing)
 ```
+
+- **Port 9223**: MCP uses its own port, never touches your personal Comet (9222)
+- **Separate Profile**: Data stored in `~/.comet-mcp`, completely isolated
+- **Visual Badge**: MCP Comet shows "[MCP]" indicator so you know which is which
 
 Claude sends high-level goals ("research X", "log into Y"). Comet figures out the clicks, scrolls, and searches. Results flow back to Claude.
 
@@ -135,7 +161,11 @@ If Comet is installed in a non-standard location:
 **"Cannot connect to Comet"**
 - **macOS**: Ensure Comet is installed at `/Applications/Comet.app`
 - **Windows**: Comet should be in `%LOCALAPPDATA%\Perplexity\Comet\Application\`
-- Check if port 9222 is available
+- MCP uses port 9223 (not 9222) - check if available
+
+**"Not logged in" message**
+- Log into Perplexity in the MCP Comet browser window (the one with [MCP] badge)
+- Then call `comet_connect` again
 
 **"WSL cannot connect to Windows localhost"**
 - Enable mirrored networking (see WSL section above)
@@ -143,6 +173,10 @@ If Comet is installed in a non-standard location:
 
 **"Tools not showing in Claude"**
 - Restart Claude Code after config changes
+
+**"Research text is truncated"**
+- Upgrade to v3.0.0 - this issue is fixed
+- Use `comet_poll` for long research to get full results
 
 ## License
 

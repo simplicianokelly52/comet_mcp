@@ -210,6 +210,17 @@ export class CometAI {
       // Continue without URL
     }
 
+    // First, scroll to bottom to ensure all content is loaded
+    await cometClient.safeEvaluate(`
+      (() => {
+        const main = document.querySelector('main') || document.body;
+        main.scrollTo(0, main.scrollHeight);
+      })()
+    `);
+
+    // Wait a moment for any lazy-loaded content
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     const result = await cometClient.safeEvaluate(`
       (() => {
         const body = document.body.innerText;
@@ -266,32 +277,62 @@ export class CometAI {
           if (matches) steps.push(...matches.map(s => s.trim().substring(0, 100)));
         }
 
-        // Extract response
+        // Extract FULL response - collect ALL prose elements, not just last
         let response = '';
         if (status === 'completed') {
           const mainContent = document.querySelector('main') || document.body;
           const allProseEls = mainContent.querySelectorAll('[class*="prose"]');
           const validProseTexts = [];
 
+          // UI text patterns to filter out
+          const uiPatterns = ['Library', 'Discover', 'Spaces', 'Finance', 'Account',
+                             'Upgrade', 'Home', 'Search', 'Ask a follow-up', 'Sign in',
+                             'Create account', 'Settings', 'Profile'];
+
           for (const el of allProseEls) {
-            if (el.closest('nav, aside, header, footer, form')) continue;
+            // Skip navigation/UI elements
+            if (el.closest('nav, aside, header, footer, form, [role="navigation"]')) continue;
 
             const text = el.innerText.trim();
-            const isUIText = ['Library', 'Discover', 'Spaces', 'Finance', 'Account',
-                              'Upgrade', 'Home', 'Search', 'Ask a follow-up'].some(ui => text.startsWith(ui));
+            
+            // Skip UI text
+            const isUIText = uiPatterns.some(ui => text.startsWith(ui));
             if (isUIText) continue;
-            if (text.endsWith('?') && text.length < 100) continue;
-            if (text.length > 5) validProseTexts.push(text);
+            
+            // Skip short questions (likely user prompts)
+            if (text.endsWith('?') && text.length < 150) continue;
+            
+            // Skip very short text
+            if (text.length < 10) continue;
+            
+            validProseTexts.push(text);
           }
 
+          // Join ALL valid prose texts instead of just taking the last one
           if (validProseTexts.length > 0) {
-            response = validProseTexts[validProseTexts.length - 1];
+            // For multiple responses in a thread, join with separator
+            // Use Set-like deduplication for overlapping content
+            const seen = new Set();
+            const uniqueTexts = [];
+            
+            for (const text of validProseTexts) {
+              // Create a key from first 100 chars to detect duplicates
+              const key = text.substring(0, 100);
+              if (!seen.has(key)) {
+                seen.add(key);
+                uniqueTexts.push(text);
+              }
+            }
+            
+            response = uniqueTexts.join('\\n\\n---\\n\\n');
           }
 
           // Clean up response
           if (response) {
             response = response.replace(/View All|Show more|Ask a follow-up|\\d+ sources?/gi, '').trim();
-            response = response.replace(/\\s+/g, ' ').trim();
+            // Normalize excessive whitespace but preserve paragraph breaks
+            response = response.replace(/[ \\t]+/g, ' ');
+            response = response.replace(/\\n{3,}/g, '\\n\\n');
           }
         }
 
@@ -299,7 +340,7 @@ export class CometAI {
           status,
           steps: [...new Set(steps)].slice(-5),
           currentStep: steps.length > 0 ? steps[steps.length - 1] : '',
-          response: response.substring(0, 8000),
+          response: response.substring(0, 50000), // Increased limit for full research text
           hasStopButton: hasActiveStopButton
         };
       })()
@@ -339,6 +380,88 @@ export class CometAI {
       })()
     `);
     return result.result.value as boolean;
+  }
+
+
+  /**
+   * Check if user is logged into Perplexity
+   * Returns login status and helpful info for first-time setup
+   */
+  async isLoggedIn(): Promise<{
+    loggedIn: boolean;
+    message: string;
+  }> {
+    try {
+      const result = await cometClient.safeEvaluate(`
+        (() => {
+          const body = document.body.innerText || '';
+          const html = document.body.innerHTML || '';
+          
+          // Signs of being logged out
+          const loggedOutIndicators = [
+            'Sign in',
+            'Log in',
+            'Create account',
+            'Sign up',
+            'Get started',
+          ];
+          
+          // Signs of being logged in
+          const loggedInIndicators = [
+            'Library',
+            'Spaces',
+            'Ask anything',
+            'What do you want to know',
+            'Home',
+          ];
+          
+          // Check for profile menu or avatar (strong logged-in indicator)
+          const hasProfileMenu = document.querySelector('[aria-label*="profile"], [aria-label*="account"], [aria-label*="user"], img[alt*="avatar"]') !== null;
+          
+          // Check for login buttons prominently displayed
+          const hasLoginButton = html.includes('Sign in') || html.includes('Log in');
+          
+          // Count indicators
+          const loggedOutScore = loggedOutIndicators.filter(i => body.includes(i)).length;
+          const loggedInScore = loggedInIndicators.filter(i => body.includes(i)).length;
+          
+          // Determine status
+          if (hasProfileMenu || (loggedInScore >= 2 && loggedOutScore === 0)) {
+            return { loggedIn: true };
+          }
+          
+          if (hasLoginButton && loggedOutScore > loggedInScore) {
+            return { loggedIn: false };
+          }
+          
+          // Ambiguous - likely logged in if we can see the main UI
+          return { loggedIn: loggedInScore > 0 };
+        })()
+      `);
+
+      const { loggedIn } = result.result.value as { loggedIn: boolean };
+
+      if (loggedIn) {
+        return {
+          loggedIn: true,
+          message: 'Logged into Perplexity. Ready to use.',
+        };
+      } else {
+        return {
+          loggedIn: false,
+          message: 
+            'Not logged into Perplexity.\n\n' +
+            'Please log in to your Perplexity account in the MCP Comet browser window.\n' +
+            'The browser should be visible on your screen.\n\n' +
+            'After logging in, call comet_connect again.',
+        };
+      }
+    } catch (error) {
+      return {
+        loggedIn: false,
+        message: `Could not check login status: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 }
 

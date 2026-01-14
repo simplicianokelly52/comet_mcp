@@ -73,6 +73,34 @@ function getCometPath(): string {
 const COMET_PATH = getCometPath();
 const DEFAULT_PORT = 9222;
 
+// ============ MCP-DEDICATED INSTANCE CONFIG ============
+// MCP uses a SEPARATE Comet instance to avoid interfering with user's personal browser
+
+/**
+ * Port for MCP-dedicated Comet instance (different from user's Comet on 9222)
+ */
+const MCP_PORT = 9223;
+
+/**
+ * Get MCP-specific user data directory for isolated browser profile
+ */
+function getMcpDataDir(): string {
+  const os = platform();
+  
+  if (os === "darwin") {
+    return `${process.env.HOME}/.comet-mcp`;
+  }
+  
+  if (os === "win32") {
+    return `${process.env.LOCALAPPDATA}\\comet-mcp`;
+  }
+  
+  // Linux/WSL - use home directory
+  return `${process.env.HOME}/.comet-mcp`;
+}
+
+const MCP_DATA_DIR = getMcpDataDir();
+
 // ============ WSL NETWORK HELPERS ============
 
 /**
@@ -205,7 +233,23 @@ export class CometCDPClient {
   async ensureHealthyConnection(): Promise<void> {
     const healthy = await this.isHealthy();
     if (!healthy) {
-      await this.reconnect();
+      // Try to reconnect first
+      try {
+        await this.reconnect();
+        return;
+      } catch {
+        // Reconnect failed, try to restart Comet entirely
+        try {
+          await this.startComet(MCP_PORT);
+          await this.connect();
+        } catch (startError) {
+          throw new Error(
+            `Cannot establish healthy connection to MCP Comet.\n` +
+            `Reconnect and restart both failed.\n` +
+            `Error: ${startError instanceof Error ? startError.message : String(startError)}`
+          );
+        }
+      }
     }
   }
 
@@ -381,75 +425,128 @@ export class CometCDPClient {
    * Start Comet browser with remote debugging enabled
    * Handles macOS, Windows, and WSL environments
    */
-  async startComet(port: number = DEFAULT_PORT): Promise<string> {
+  async startComet(port: number = MCP_PORT): Promise<string> {
     this.state.port = port;
+
+    // Ensure we're using MCP port, never interfere with user's Comet on 9222
+    if (port === 9222) {
+      port = MCP_PORT;
+      this.state.port = port;
+    }
+
+    // Create MCP data directory if it doesn't exist
+    const { mkdirSync } = await import('fs');
+    try {
+      mkdirSync(MCP_DATA_DIR, { recursive: true });
+    } catch {
+      // Directory may already exist
+    }
+
+    // Common launch arguments for isolated MCP instance
+    const launchArgs = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${MCP_DATA_DIR}`,
+    ];
 
     // ========== WSL: Use PowerShell to communicate with Windows ==========
     if (IS_WSL) {
-      // Check if Comet is already running via PowerShell HTTP
+      // Check if MCP Comet is already running via PowerShell HTTP
       try {
         const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
         if (response.ok) {
           const version = await response.json() as CDPVersion;
-          return `Comet already running on Windows host, port: ${port} (${version.Browser})`;
+          return `MCP Comet already running on Windows host, port: ${port} (${version.Browser})`;
         }
       } catch {
-        // Comet not accessible, need to launch
+        // MCP Comet not accessible, need to launch
+      }
+
+      // Kill any stale MCP Comet process on this port
+      try {
+        execSync(`powershell.exe -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`, {
+          timeout: 5000,
+          windowsHide: true,
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch {
+        // No stale process
       }
 
       // Get Windows LOCALAPPDATA path and construct Comet path
       let cometPath = '';
+      let winDataDir = '';
       try {
         const localAppData = execSync('cmd.exe /c echo %LOCALAPPDATA%', { encoding: 'utf8' })
           .trim().replace(/\r?\n/g, '');
         cometPath = `${localAppData}\\Perplexity\\Comet\\Application\\Comet.exe`;
+        winDataDir = `${localAppData}\\comet-mcp`;
       } catch {
         cometPath = 'C:\\Users\\' + (process.env.USER || 'user') +
           '\\AppData\\Local\\Perplexity\\Comet\\Application\\Comet.exe';
+        winDataDir = 'C:\\Users\\' + (process.env.USER || 'user') + '\\AppData\\Local\\comet-mcp';
       }
 
-      try {
-        // Launch Comet via PowerShell (Set-Location avoids UNC path issues)
-        const psCommand = `Set-Location C:\\; Start-Process -FilePath '${cometPath}' -ArgumentList '--remote-debugging-port=${port}'`;
-        spawn('powershell.exe', ['-NoProfile', '-Command', psCommand], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref();
+      // Retry logic for startup reliability
+      const maxRetries = 3;
+      let lastError: Error | null = null;
 
-        // Wait for Comet to start
-        return new Promise((resolve, reject) => {
-          const maxAttempts = 40;
-          let attempts = 0;
+      for (let retry = 0; retry < maxRetries; retry++) {
+        try {
+          // Launch MCP Comet via PowerShell with isolated profile
+          const psCommand = `Set-Location C:\\; Start-Process -FilePath '${cometPath}' -ArgumentList '--remote-debugging-port=${port}','--user-data-dir=${winDataDir}'`;
+          spawn('powershell.exe', ['-NoProfile', '-Command', psCommand], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
 
-          const checkReady = async () => {
-            attempts++;
-            try {
-              const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
-              if (response.ok) {
-                resolve(`Comet started via WSL->PowerShell on port ${port}`);
-                return;
+          // Wait for Comet to start with extended timeout
+          const result = await new Promise<string>((resolve, reject) => {
+            const maxAttempts = 60; // 30 seconds
+            let attempts = 0;
+
+            const checkReady = async () => {
+              attempts++;
+              try {
+                const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+                if (response.ok) {
+                  resolve(`MCP Comet started via WSL->PowerShell on port ${port} (isolated profile)`);
+                  return;
+                }
+              } catch { /* keep trying */ }
+
+              if (attempts < maxAttempts) {
+                setTimeout(checkReady, 500);
+              } else {
+                reject(new Error(`Timeout waiting for MCP Comet after ${maxAttempts * 500 / 1000}s`));
               }
-            } catch { /* keep trying */ }
+            };
 
-            if (attempts < maxAttempts) {
-              setTimeout(checkReady, 500);
-            } else {
-              reject(new Error(
-                `Timeout waiting for Comet. Tried to launch: ${cometPath}\n` +
-                `Try manually: powershell.exe -Command "Start-Process '${cometPath}' -ArgumentList '--remote-debugging-port=${port}'"`
-              ));
-            }
-          };
+            setTimeout(checkReady, 2000);
+          });
 
-          setTimeout(checkReady, 2000);
-        });
-      } catch (launchError) {
-        throw new Error(
-          `Cannot connect to or launch Comet browser.\n` +
-          `Tried path: ${cometPath}\n` +
-          `Error: ${launchError instanceof Error ? launchError.message : String(launchError)}`
-        );
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          if (retry < maxRetries - 1) {
+            // Kill and retry
+            try {
+              execSync(`powershell.exe -NoProfile -Command "Get-Process comet -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*${port}*' } | Stop-Process -Force"`, {
+                timeout: 5000,
+                windowsHide: true,
+              });
+            } catch { /* continue */ }
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
       }
+
+      throw new Error(
+        `Cannot start MCP Comet after ${maxRetries} attempts.\n` +
+        `Path: ${cometPath}\n` +
+        `Port: ${port}\n` +
+        `Data dir: ${winDataDir}\n` +
+        `Last error: ${lastError?.message}`
+      );
     }
 
     // ========== Native Windows: Use windowsFetch for HTTP ==========
@@ -458,48 +555,73 @@ export class CometCDPClient {
         const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
         if (response.ok) {
           const version = await response.json() as CDPVersion;
-          return `Comet already running with debug port: ${version.Browser}`;
+          return `MCP Comet already running with debug port ${port}: ${version.Browser}`;
         }
       } catch {
+        // Check for stale process and kill it
         const isRunning = await this.isCometProcessRunning();
         if (isRunning) {
           await this.killComet();
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
-      // Start Comet on Windows
-      return new Promise((resolve, reject) => {
-        this.cometProcess = spawn(COMET_PATH, [`--remote-debugging-port=${port}`], {
-          detached: true,
-          stdio: "ignore",
-        });
-        this.cometProcess.unref();
+      // Retry logic
+      const maxRetries = 3;
+      let lastError: Error | null = null;
 
-        const maxAttempts = 40;
-        let attempts = 0;
+      for (let retry = 0; retry < maxRetries; retry++) {
+        try {
+          // Start MCP Comet on Windows with isolated profile
+          this.cometProcess = spawn(COMET_PATH, launchArgs, {
+            detached: true,
+            stdio: "ignore",
+          });
+          this.cometProcess.unref();
 
-        const checkReady = async () => {
-          attempts++;
-          try {
-            const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
-            if (response.ok) {
-              resolve(`Comet started with debug port ${port}`);
-              return;
-            }
-          } catch { /* keep trying */ }
+          const result = await new Promise<string>((resolve, reject) => {
+            const maxAttempts = 60;
+            let attempts = 0;
 
-          if (attempts < maxAttempts) {
-            setTimeout(checkReady, 500);
-          } else {
-            reject(new Error(`Timeout waiting for Comet. Try: "${COMET_PATH}" --remote-debugging-port=${port}`));
+            const checkReady = async () => {
+              attempts++;
+              try {
+                const response = await windowsFetch(`http://127.0.0.1:${port}/json/version`);
+                if (response.ok) {
+                  resolve(`MCP Comet started with debug port ${port} (isolated profile)`);
+                  return;
+                }
+              } catch { /* keep trying */ }
+
+              if (attempts < maxAttempts) {
+                setTimeout(checkReady, 500);
+              } else {
+                reject(new Error(`Timeout waiting for MCP Comet`));
+              }
+            };
+
+            setTimeout(checkReady, 1500);
+          });
+
+          return result;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          if (retry < maxRetries - 1) {
+            await this.killComet();
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
-        };
+        }
+      }
 
-        setTimeout(checkReady, 1500);
-      });
+      throw new Error(
+        `Cannot start MCP Comet after ${maxRetries} attempts.\n` +
+        `Path: ${COMET_PATH}\n` +
+        `Args: ${launchArgs.join(' ')}\n` +
+        `Error: ${lastError?.message}`
+      );
     }
 
-    // ========== macOS/Linux: Original approach ==========
+    // ========== macOS/Linux: Original approach with improvements ==========
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -508,50 +630,77 @@ export class CometCDPClient {
 
       if (response.ok) {
         const version = await response.json() as CDPVersion;
-        return `Comet already running with debug port: ${version.Browser}`;
+        return `MCP Comet already running with debug port ${port}: ${version.Browser}`;
       }
     } catch {
+      // Check for stale process and kill it
       const isRunning = await this.isCometProcessRunning();
       if (isRunning) {
         await this.killComet();
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    // Start Comet on macOS/Linux
-    return new Promise((resolve, reject) => {
-      this.cometProcess = spawn(COMET_PATH, [`--remote-debugging-port=${port}`], {
-        detached: true,
-        stdio: "ignore",
-      });
-      this.cometProcess.unref();
+    // Retry logic for macOS/Linux
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      const maxAttempts = 40;
-      let attempts = 0;
+    for (let retry = 0; retry < maxRetries; retry++) {
+      try {
+        // Start MCP Comet with isolated profile
+        this.cometProcess = spawn(COMET_PATH, launchArgs, {
+          detached: true,
+          stdio: "ignore",
+        });
+        this.cometProcess.unref();
 
-      const checkReady = async () => {
-        attempts++;
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          const response = await fetch(`http://localhost:${port}/json/version`, { signal: controller.signal });
-          clearTimeout(timeoutId);
+        const result = await new Promise<string>((resolve, reject) => {
+          const maxAttempts = 60;
+          let attempts = 0;
 
-          if (response.ok) {
-            const version = await response.json() as CDPVersion;
-            resolve(`Comet started with debug port ${port}: ${version.Browser}`);
-            return;
-          }
-        } catch { /* keep trying */ }
+          const checkReady = async () => {
+            attempts++;
+            try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 2000);
+              const response = await fetch(`http://localhost:${port}/json/version`, { signal: controller.signal });
+              clearTimeout(timeoutId);
 
-        if (attempts < maxAttempts) {
-          setTimeout(checkReady, 500);
-        } else {
-          reject(new Error(`Timeout waiting for Comet. Try: ${COMET_PATH} --remote-debugging-port=${port}`));
+              if (response.ok) {
+                const version = await response.json() as CDPVersion;
+                resolve(`MCP Comet started with debug port ${port}: ${version.Browser} (isolated profile at ${MCP_DATA_DIR})`);
+                return;
+              }
+            } catch { /* keep trying */ }
+
+            if (attempts < maxAttempts) {
+              setTimeout(checkReady, 500);
+            } else {
+              reject(new Error(`Timeout waiting for MCP Comet after ${maxAttempts * 500 / 1000}s`));
+            }
+          };
+
+          setTimeout(checkReady, 1500);
+        });
+
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (retry < maxRetries - 1) {
+          await this.killComet();
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
-      };
+      }
+    }
 
-      setTimeout(checkReady, 1500);
-    });
+    throw new Error(
+      `Cannot start MCP Comet after ${maxRetries} attempts.\n` +
+      `Path: ${COMET_PATH}\n` +
+      `Args: ${launchArgs.join(' ')}\n` +
+      `Data dir: ${MCP_DATA_DIR}\n` +
+      `Error: ${lastError?.message}\n\n` +
+      `Try manually: ${COMET_PATH} ${launchArgs.join(' ')}`
+    );
   }
 
   /**
@@ -617,6 +766,28 @@ export class CometCDPClient {
 
     const { result } = await this.client.Runtime.evaluate({ expression: "window.location.href" });
     this.state.currentUrl = result.value as string;
+
+    // Add visual indicator that this is MCP-controlled Comet
+    try {
+      await this.client.Runtime.evaluate({
+        expression: `
+          (() => {
+            // Add MCP badge to document title
+            if (!document.title.includes('[MCP]')) {
+              document.title = '[MCP] ' + document.title;
+            }
+            // Also add a subtle visual indicator
+            if (!document.getElementById('mcp-indicator')) {
+              const indicator = document.createElement('div');
+              indicator.id = 'mcp-indicator';
+              indicator.style.cssText = 'position:fixed;top:4px;right:4px;background:#D97757;color:white;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;z-index:999999;pointer-events:none;opacity:0.9;';
+              indicator.textContent = 'MCP';
+              document.body.appendChild(indicator);
+            }
+          })()
+        `
+      });
+    } catch { /* non-critical */ }
 
     return `Connected to tab: ${this.state.currentUrl}`;
   }

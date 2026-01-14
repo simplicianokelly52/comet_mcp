@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background circle - Claude orange/coral -->
+  <circle cx="256" cy="256" r="240" fill="#D97757"/>
+
+  <!-- Comet tail - gradient -->
+  <defs>
+    <linearGradient id="tailGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:0"/>
+      <stop offset="100%" style="stop-color:#FFFFFF;stop-opacity:0.8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Comet body - stylized -->
+  <ellipse cx="280" cy="256" rx="120" ry="80" fill="#FFFFFF"/>
+
+  <!-- Comet tail -->
+  <path d="M160 256 Q80 256 40 240 Q80 280 160 256" fill="url(#tailGrad)"/>
+  <path d="M160 240 Q60 230 20 200 Q70 260 160 256" fill="url(#tailGrad)" opacity="0.6"/>
+  <path d="M160 272 Q60 282 20 312 Q70 252 160 256" fill="url(#tailGrad)" opacity="0.6"/>
+
+  <!-- Anthropic 'A' hint in comet -->
+  <path d="M240 200 L280 310 L320 200 M255 270 L305 270"
+        stroke="#D97757" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- MCP indicator dot -->
+  <circle cx="400" cy="140" r="40" fill="#1a1a2e"/>
+  <text x="400" y="152" text-anchor="middle" fill="white" font-family="sans-serif" font-size="32" font-weight="bold">M</text>
+</svg>
