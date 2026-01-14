@@ -39,16 +39,20 @@ Can interact with pages, but use a **one-agent-do-all** approach: the same reaso
 - **Comet** handles the browsing: navigation, login walls, dynamic content, deep research
 - **Result**: Claude's coding intelligence + Perplexity's web intelligence, working together
 
-## Quick Start
+## Installation (3 Steps)
 
-### 1. Configure Claude Code
+### Step 1: Install Comet Browser
 
-Add to `~/.claude.json` or `.mcp.json`:
+Download: https://www.perplexity.ai/comet
+
+### Step 2: Add to Claude Code
+
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "comet-bridge": {
+    "comet": {
       "command": "npx",
       "args": ["-y", "comet-mcp"]
     }
@@ -56,49 +60,34 @@ Add to `~/.claude.json` or `.mcp.json`:
 }
 ```
 
-### 2. Install Comet Browser
+### Step 3: macOS Setup (One-time)
 
-Download and install [Perplexity Comet](https://www.perplexity.ai/comet).
-
-### macOS: Create Isolated App Bundle (One-time)
-
-On macOS, create a separate app bundle to run MCP Comet alongside your personal Comet:
+Run the setup script to create an isolated MCP browser:
 
 ```bash
-# Create the MCP-specific Comet app
+curl -sL https://raw.githubusercontent.com/hanzili/comet-mcp/main/scripts/setup-macos.sh | bash
+```
+
+<details>
+<summary>Or run manually</summary>
+
+```bash
 MCP_APP="$HOME/.comet-mcp/Comet-MCP.app"
 mkdir -p "$HOME/.comet-mcp"
 cp -R "/Applications/Comet.app" "$MCP_APP"
-
-# Change bundle ID to make it a "different" app
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ai.perplexity.comet.mcp" "$MCP_APP/Contents/Info.plist"
-
-# Download and apply custom MCP icon (distinguishes from personal Comet)
-curl -sL "https://raw.githubusercontent.com/hanzili/comet-mcp/main/assets/comet-mcp.icns" \
-  -o "$MCP_APP/Contents/Resources/app.icns"
-cp "$MCP_APP/Contents/Resources/app.icns" "$MCP_APP/Contents/Resources/electron.icns"
-
-# Re-sign (required after modifying the app)
-find "$MCP_APP" -name "*.dylib" -exec codesign --force --sign - {} \;
-find "$MCP_APP" -name "*.so" -exec codesign --force --sign - {} \;
-find "$MCP_APP" -type d -name "*.framework" | while read -r fw; do
-  codesign --force --sign - "$fw"
-done
 codesign --force --deep --sign - "$MCP_APP"
 ```
+</details>
 
-This creates `~/.comet-mcp/Comet-MCP.app` with a different bundle ID and custom icon (MCP + Anthropic + Comet), allowing it to run truly separately from your personal Comet.
+### First Use
 
-That's it! The MCP server automatically launches the dedicated Comet instance for MCP use.
+1. Restart Claude Code
+2. Say: **"Connect to Comet"**
+3. Login to Perplexity in the MCP window (first time only)
+4. Done!
 
-### 3. First-Time Setup
-
-On first `comet_connect`, if not logged in:
-1. The MCP Comet browser window will open
-2. Log into your Perplexity account
-3. Call `comet_connect` again - you're ready!
-
-### 4. Use in Claude Code
+### Try It
 
 ```
 You: "Use Comet to research the top AI frameworks in 2025"
