@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- macOS Squircle mask -->
+    <clipPath id="squircle">
+      <path d="M512 0C222.6 0 112 0 56 56S0 222.6 0 512s0 399.4 56 456 166.6 56 456 56 399.4 0 456-56 56-166.6 56-456S967.4 112 912 56 801.4 0 512 0z"/>
+    </clipPath>
+
+    <!-- Main gradient: Claude orange to Perplexity teal -->
+    <linearGradient id="cometGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#DA7756"/>
+      <stop offset="35%" stop-color="#E08B5C"/>
+      <stop offset="65%" stop-color="#3BA8B8"/>
+      <stop offset="100%" stop-color="#20B8CD"/>
+    </linearGradient>
+
+    <!-- Glassy overlay gradient -->
+    <linearGradient id="glassOverlay" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.1"/>
+    </linearGradient>
+
+    <!-- Shine effect -->
+    <linearGradient id="shine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Glow filter for comet head -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="15" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Subtle inner shadow -->
+    <filter id="innerShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feOffset dx="0" dy="4"/>
+      <feGaussianBlur stdDeviation="8"/>
+      <feComposite operator="out" in="SourceGraphic" result="inverse"/>
+      <feFlood flood-color="#000" flood-opacity="0.2"/>
+      <feComposite operator="in" in2="inverse"/>
+      <feComposite operator="over" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <!-- Clipped content -->
+  <g clip-path="url(#squircle)">
+    <!-- Dark background (Perplexity off-black) -->
+    <rect width="1024" height="1024" fill="#091717"/>
+
+    <!-- Subtle background gradient -->
+    <rect width="1024" height="1024" fill="url(#glassOverlay)" opacity="0.3"/>
+
+    <!-- Comet trail glow (subtle) -->
+    <ellipse cx="300" cy="724" rx="180" ry="80" fill="#DA7756" opacity="0.15" transform="rotate(-45 300 724)"/>
+
+    <!-- Main comet sweep shape -->
+    <path
+      d="M180 844
+         Q 280 744, 400 624
+         Q 520 504, 620 404
+         Q 720 304, 780 244
+         Q 820 204, 844 180
+         Q 870 220, 830 280
+         Q 780 360, 700 440
+         Q 600 540, 480 660
+         Q 360 780, 260 840
+         Q 220 860, 180 844
+         Z"
+      fill="url(#cometGradient)"
+      filter="url(#innerShadow)"
+    />
+
+    <!-- Comet head (glowing teal orb) -->
+    <circle cx="800" cy="224" r="60" fill="#20B8CD" filter="url(#glow)"/>
+    <circle cx="800" cy="224" r="45" fill="#4DD4E8"/>
+    <circle cx="785" cy="210" r="15" fill="#ffffff" opacity="0.6"/>
+
+    <!-- Glass shine on comet body -->
+    <path
+      d="M220 800
+         Q 320 700, 440 580
+         Q 560 460, 660 360
+         Q 740 280, 790 230
+         Q 760 270, 680 350
+         Q 580 450, 460 570
+         Q 340 690, 260 770
+         Q 230 795, 220 800
+         Z"
+      fill="url(#shine)"
+      opacity="0.5"
+    />
+
+    <!-- Sparkle particles -->
+    <circle cx="650" cy="374" r="4" fill="#ffffff" opacity="0.8"/>
+    <circle cx="550" cy="474" r="3" fill="#ffffff" opacity="0.6"/>
+    <circle cx="450" cy="574" r="3" fill="#ffffff" opacity="0.5"/>
+    <circle cx="350" cy="674" r="2" fill="#ffffff" opacity="0.4"/>
+    <circle cx="720" cy="320" r="5" fill="#4DD4E8" opacity="0.7"/>
+
+    <!-- Top glass overlay -->
+    <path
+      d="M512 0C222.6 0 112 0 56 56S0 222.6 0 512
+         L1024 0
+         C801.4 0 512 0 512 0z"
+      fill="url(#shine)"
+      opacity="0.15"
+    />
+  </g>
+</svg>
