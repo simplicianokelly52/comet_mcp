@@ -380,22 +380,26 @@ export class CometCDPClient {
   }
 
   /**
-   * Check if Comet process is running
+   * Check if MCP-specific Comet process is running (NOT personal Comet)
+   * Only detects Comet instances started with MCP's debugging port
    */
-  private async isCometProcessRunning(): Promise<boolean> {
+  private async isMcpCometRunning(): Promise<boolean> {
     return new Promise((resolve) => {
       if (IS_WINDOWS) {
-        // Windows: use tasklist to check for comet.exe
-        const check = spawn('tasklist', ['/FI', 'IMAGENAME eq comet.exe', '/NH']);
+        // Windows: use WMIC to find Comet with MCP port in command line
+        const check = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${MCP_PORT}%'`, 'get', 'processid']);
         let output = '';
         check.stdout?.on('data', (data) => { output += data.toString(); });
         check.on('close', () => {
-          resolve(output.toLowerCase().includes('comet.exe'));
+          // WMIC returns header + data if found, just header if not
+          const lines = output.trim().split('\n').filter(l => l.trim() && !l.includes('ProcessId'));
+          resolve(lines.length > 0);
         });
         check.on('error', () => resolve(false));
       } else {
-        // macOS/Linux: use pgrep
-        const check = spawn('pgrep', ['-f', 'Comet.app']);
+        // macOS/Linux: use pgrep with MCP-specific port pattern
+        // This ensures we only detect MCP Comet, not personal Comet on port 9222
+        const check = spawn('pgrep', ['-f', `remote-debugging-port=${MCP_PORT}`]);
         check.on('close', (code) => resolve(code === 0));
         check.on('error', () => resolve(false));
       }
@@ -403,18 +407,20 @@ export class CometCDPClient {
   }
 
   /**
-   * Kill any running Comet process
+   * Kill only MCP-specific Comet process (NEVER kills personal Comet)
+   * Only terminates Comet instances started with MCP's debugging port
    */
-  private async killComet(): Promise<void> {
+  private async killMcpComet(): Promise<void> {
     return new Promise((resolve) => {
       if (IS_WINDOWS) {
-        // Windows: use taskkill to kill comet.exe
-        const kill = spawn('taskkill', ['/F', '/IM', 'comet.exe']);
+        // Windows: use WMIC to find and kill only MCP Comet by port
+        const kill = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${MCP_PORT}%'`, 'call', 'terminate']);
         kill.on('close', () => setTimeout(resolve, 1000));
         kill.on('error', () => setTimeout(resolve, 1000));
       } else {
-        // macOS/Linux: use pkill
-        const kill = spawn('pkill', ['-f', 'Comet.app']);
+        // macOS/Linux: use pkill with MCP-specific port pattern
+        // This ensures we ONLY kill MCP Comet, never personal Comet on port 9222
+        const kill = spawn('pkill', ['-f', `remote-debugging-port=${MCP_PORT}`]);
         kill.on('close', () => setTimeout(resolve, 1000));
         kill.on('error', () => setTimeout(resolve, 1000));
       }
@@ -569,9 +575,9 @@ export class CometCDPClient {
         }
       } catch {
         // Check for stale process and kill it
-        const isRunning = await this.isCometProcessRunning();
+        const isRunning = await this.isMcpCometRunning();
         if (isRunning) {
-          await this.killComet();
+          await this.killMcpComet();
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
@@ -617,7 +623,7 @@ export class CometCDPClient {
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
           if (retry < maxRetries - 1) {
-            await this.killComet();
+            await this.killMcpComet();
             await new Promise(resolve => setTimeout(resolve, 2000));
           }
         }
@@ -644,9 +650,9 @@ export class CometCDPClient {
       }
     } catch {
       // Check for stale process and kill it
-      const isRunning = await this.isCometProcessRunning();
+      const isRunning = await this.isMcpCometRunning();
       if (isRunning) {
-        await this.killComet();
+        await this.killMcpComet();
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
@@ -725,7 +731,7 @@ export class CometCDPClient {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (retry < maxRetries - 1) {
-          await this.killComet();
+          await this.killMcpComet();
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
