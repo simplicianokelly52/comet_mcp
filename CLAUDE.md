@@ -74,3 +74,28 @@ Manual testing only (integration code, external DOM dependency).
 - **Stale poll response**: If poll returns unrelated response, send prompt again
 - **Research mode**: Takes longer than search, may need multiple polls
 - **Folder UI changes**: Perplexity may update UI, folder operations may need adjustment
+
+## Skills (Claude Code Integration)
+
+The project includes a bundled Skill that teaches Claude how to use tools effectively:
+
+```
+skills/
+└── comet-research/
+    └── SKILL.md    # Teaches Claude research workflow
+```
+
+**Skill provides**:
+- Mode selection guidance (search vs research vs labs)
+- Best practices for tool usage
+- Error handling patterns
+- Response formatting with citations
+
+**Install to system**:
+```bash
+cp -r skills/comet-research ~/.claude/skills/
+```
+
+**Plugin structure** (`.claude-plugin/plugin.json`):
+- Enables distribution via Claude plugin marketplace
+- Bundles both MCP server and skills together

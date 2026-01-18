@@ -269,6 +269,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
           // Task completed - return result directly (but only if we saw a NEW response)
           if (status.status === 'completed' && sawNewResponse) {
+            // Minimize window after successful response
+            await cometClient.hideApp();
             return { content: [{ type: "text", text: status.response || 'Task completed (no response text extracted)' }] };
           }
         }
@@ -296,6 +298,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // If completed, return the response directly (most useful case)
         if (status.status === 'completed' && status.response) {
+          // Minimize window after successful response
+          await cometClient.hideApp();
           return { content: [{ type: "text", text: status.response }] };
         }
 

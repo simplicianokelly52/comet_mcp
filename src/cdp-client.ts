@@ -671,7 +671,9 @@ export class CometCDPClient {
 
           if (mcpAppExists) {
             // Use the MCP-specific Comet app (different bundle ID = truly separate)
+            // -g flag: launch in background without bringing to foreground
             this.cometProcess = spawn('open', [
+              '-g',  // Don't bring app to foreground
               '-a', mcpAppPath,
               '--args',
               ...launchArgs,
@@ -940,6 +942,32 @@ export class CometCDPClient {
       return response.ok;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Hide the Comet app (like Cmd+H on macOS)
+   * Keeps process alive for fast reconnection
+   */
+  async hideApp(): Promise<void> {
+    try {
+      if (platform() === 'darwin') {
+        // macOS: Use AppleScript to hide the app (Cmd+H behavior)
+        execSync(`osascript -e 'tell application "System Events" to set visible of process "Comet-MCP" to false' 2>/dev/null || osascript -e 'tell application "System Events" to set visible of process "Comet" to false' 2>/dev/null`, { stdio: 'ignore' });
+      } else if (platform() === 'win32') {
+        // Windows: Minimize window via CDP
+        if (this.client && this.state.activeTabId) {
+          const { windowId } = await (this.client as any).Browser.getWindowForTarget({
+            targetId: this.state.activeTabId
+          });
+          await (this.client as any).Browser.setWindowBounds({
+            windowId,
+            bounds: { windowState: 'minimized' }
+          });
+        }
+      }
+    } catch {
+      // Non-critical - window management may not be available
     }
   }
 

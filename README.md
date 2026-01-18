@@ -113,6 +113,42 @@ Claude: [uses comet_folders to organize research]
 | `comet_folders` | List, create, or save to research folders |
 | `comet_library` | Search your existing Perplexity research |
 
+## Skills (Claude Code)
+
+Comet MCP includes a bundled **Skill** that teaches Claude how to use the tools effectively.
+
+### Install Skill (System-wide)
+
+Copy the skill to your personal skills directory:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r skills/comet-research ~/.claude/skills/
+```
+
+### What the Skill Does
+
+The `comet-research` skill:
+- Teaches Claude when to use each tool
+- Provides mode selection guidance (search vs research vs labs)
+- Includes best practices and error handling
+- Formats research output with citations
+
+### Trigger Phrases
+
+The skill activates when you say things like:
+- "Research the latest..."
+- "Look up information about..."
+- "Find out what..."
+- "What's the current news on..."
+
+### Manual Invocation
+
+You can also invoke directly:
+```
+/comet-research [your research topic]
+```
+
 ## How It Works
 
 ```
