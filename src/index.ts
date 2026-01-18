@@ -810,5 +810,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+// CLI argument handling
+const args = process.argv.slice(2);
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`comet-mcp v3.0.0
+
+MCP server connecting Claude Code to Perplexity Comet browser.
+
+Usage:
+  Add to ~/.claude.json:
+  {
+    "mcpServers": {
+      "comet": {
+        "command": "npx",
+        "args": ["-y", "comet-mcp"]
+      }
+    }
+  }
+
+Tools:
+  comet_connect    Connect to MCP-dedicated Comet browser
+  comet_ask        Send prompt and wait for response
+  comet_poll       Check status of long-running tasks
+  comet_stop       Stop current task
+  comet_screenshot Capture current page
+  comet_mode       Switch Perplexity mode (search/research/labs)
+  comet_folders    Manage research spaces
+  comet_library    Search existing research
+  comet_done       Cleanup and close research session
+
+More info: https://github.com/hanzili/comet-mcp`);
+  process.exit(0);
+}
+
+if (args.includes('--version') || args.includes('-v')) {
+  console.log('comet-mcp v3.0.0');
+  process.exit(0);
+}
+
 const transport = new StdioServerTransport();
 server.connect(transport);

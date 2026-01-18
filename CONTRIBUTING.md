@@ -13,9 +13,23 @@ PRs without a related issue may be closed.
 ## Development
 
 ```bash
+git clone https://github.com/hanzili/comet-mcp.git
+cd comet-mcp
 npm install
 npm run build
-npm run watch  # for development
+```
+
+To test your changes, point Claude Code to your local build:
+
+```json
+{
+  "mcpServers": {
+    "comet": {
+      "command": "node",
+      "args": ["/path/to/comet-mcp/dist/index.js"]
+    }
+  }
+}
 ```
 
 ## Testing

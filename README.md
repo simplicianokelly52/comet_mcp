@@ -87,6 +87,20 @@ codesign --force --deep --sign - "$MCP_APP"
 3. Login to Perplexity in the MCP window (first time only)
 4. Done!
 
+### Verify Installation
+
+To verify the MCP server is working:
+
+```bash
+npx comet-mcp --help
+```
+
+Or check Claude Code recognizes the tools:
+```
+You: "What Comet tools do you have?"
+Claude: [lists comet_connect, comet_ask, comet_poll, etc.]
+```
+
 ### Try It
 
 ```
@@ -117,9 +131,17 @@ Claude: [uses comet_folders to organize research into spaces]
 
 Comet MCP includes a bundled **Skill** that teaches Claude how to use the tools effectively.
 
-### Install Skill (System-wide)
+### Install Skill (Optional)
 
-Copy the skill to your personal skills directory:
+Download and install the skill to your personal skills directory:
+
+```bash
+mkdir -p ~/.claude/skills
+curl -sL https://raw.githubusercontent.com/hanzili/comet-mcp/main/skills/comet-research/SKILL.md \
+  -o ~/.claude/skills/comet-research.md
+```
+
+Or if you cloned the repo:
 
 ```bash
 mkdir -p ~/.claude/skills
@@ -164,9 +186,9 @@ Claude sends high-level goals ("research X", "log into Y"). Comet figures out th
 
 ## Requirements
 
-- Node.js 18+
+- [Node.js 18+](https://nodejs.org/) (LTS recommended)
 - [Perplexity Comet Browser](https://www.perplexity.ai/comet)
-- Claude Code (or any MCP client)
+- [Claude Code](https://claude.ai/download) (or any MCP client)
 - **Supported platforms**: macOS, Windows, WSL2
 
 ## Windows & WSL Support
