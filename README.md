@@ -19,7 +19,7 @@ An MCP server that connects Claude Code to [Perplexity Comet](https://www.perple
 - **Reliable Startup** - Auto-retry logic, kills stale processes, extended timeouts
 - **Login Detection** - First-time setup prompts for Perplexity sign-in
 - **Visual Indicator** - MCP Comet shows "[MCP]" badge so you know which browser is which
-- **Research Folders** - Save and organize research into folders
+- **Research Spaces** - Save and organize research into spaces
 - **Library Search** - Search your existing Perplexity research history
 
 ## Why?
@@ -96,8 +96,8 @@ Claude: [delegates to Comet, monitors progress, returns results]
 You: "Log into my GitHub and check my notifications"
 Claude: [Comet handles the login flow and navigation]
 
-You: "Save this research to my 'AI Projects' folder"
-Claude: [uses comet_folders to organize research]
+You: "Save this research to my 'AI Projects' space"
+Claude: [uses comet_folders to organize research into spaces]
 ```
 
 ## Tools
@@ -109,8 +109,8 @@ Claude: [uses comet_folders to organize research]
 | `comet_poll` | Check progress on long-running tasks |
 | `comet_stop` | Stop current task |
 | `comet_screenshot` | Capture current page |
-| `comet_mode` | Switch modes: search, research, labs, learn |
-| `comet_folders` | List, create, or save to research folders |
+| `comet_mode` | Switch modes: search, research, labs |
+| `comet_folders` | List, create, or save to research spaces |
 | `comet_library` | Search your existing Perplexity research |
 
 ## Skills (Claude Code)

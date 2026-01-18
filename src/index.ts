@@ -50,13 +50,13 @@ const TOOLS: Tool[] = [
   },
   {
     name: "comet_mode",
-    description: "Switch Perplexity search mode. Modes: 'search' (basic), 'research' (deep research), 'labs' (analytics/visualization), 'learn' (educational). Call without mode to see current mode.",
+    description: "Switch Perplexity search mode. Modes: 'search' (basic), 'research' (deep research), 'labs' (create files/apps). Call without mode to see current mode.",
     inputSchema: {
       type: "object",
       properties: {
         mode: {
           type: "string",
-          enum: ["search", "research", "labs", "learn"],
+          enum: ["search", "research", "labs"],
           description: "Mode to switch to (optional - omit to see current mode)",
         },
       },
@@ -64,18 +64,18 @@ const TOOLS: Tool[] = [
   },
   {
     name: "comet_folders",
-    description: "Manage research folders in Perplexity. List existing folders, create new ones, or save current research to a folder.",
+    description: "Manage research spaces in Perplexity. List existing spaces, create new ones, or save current research to a space.",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
           enum: ["list", "create", "save"],
-          description: "Action: 'list' folders, 'create' new folder, 'save' current research to folder",
+          description: "Action: 'list' spaces, 'create' new space, 'save' current research to space",
         },
         name: {
           type: "string",
-          description: "Folder name (required for 'create' and 'save' actions)",
+          description: "Space name (required for 'create' and 'save' actions)",
         },
       },
     },
@@ -358,22 +358,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!mode) {
           const result = await cometClient.evaluate(`
             (() => {
-              // Try button group first (wide screen)
-              const modes = ['Search', 'Research', 'Labs', 'Learn'];
-              for (const mode of modes) {
-                const btn = document.querySelector('button[aria-label="' + mode + '"]');
-                if (btn && btn.getAttribute('data-state') === 'checked') {
-                  return mode.toLowerCase();
+              // Try button group first (wide screen) - use new aria-labels
+              const modeLabels = [
+                { label: 'Search', key: 'search' },
+                { label: 'Deep research', key: 'research' },
+                { label: 'Create files and apps', key: 'labs' }
+              ];
+              for (const { label, key } of modeLabels) {
+                const btn = document.querySelector('button[aria-label="' + label + '"]');
+                if (btn && (btn.getAttribute('data-state') === 'checked' || btn.getAttribute('aria-checked') === 'true')) {
+                  return key;
                 }
               }
               // Try dropdown (narrow screen) - look for the mode selector button
               const dropdownBtn = document.querySelector('button[class*="gap"]');
               if (dropdownBtn) {
                 const text = dropdownBtn.innerText.toLowerCase();
+                if (text.includes('deep research')) return 'research';
+                if (text.includes('create files')) return 'labs';
                 if (text.includes('search')) return 'search';
-                if (text.includes('research')) return 'research';
-                if (text.includes('labs')) return 'labs';
-                if (text.includes('learn')) return 'learn';
               }
               return 'search';
             })()
@@ -383,8 +386,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const descriptions: Record<string, string> = {
             search: 'Basic web search',
             research: 'Deep research with comprehensive analysis',
-            labs: 'Analytics, visualizations, and coding',
-            learn: 'Educational content and explanations'
+            labs: 'Create files, apps, and visualizations'
           };
 
           let output = `Current mode: ${currentMode}\n\nAvailable modes:\n`;
@@ -396,12 +398,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return { content: [{ type: "text", text: output }] };
         }
 
-        // Switch mode
+        // Switch mode - use new Perplexity aria-labels
         const modeMap: Record<string, string> = {
           search: "Search",
-          research: "Research",
-          labs: "Labs",
-          learn: "Learn",
+          research: "Deep research",
+          labs: "Create files and apps",
         };
         const ariaLabel = modeMap[mode];
         if (!ariaLabel) {
@@ -411,10 +412,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        // Navigate to Perplexity first if not there
+        // Navigate to Perplexity home page if not on a page with mode selector
+        // Mode selector only exists on the home page, not on /spaces, /library, etc.
         const state = cometClient.currentState;
-        if (!state.currentUrl?.includes("perplexity.ai")) {
+        const url = state.currentUrl || "";
+        const needsNav = !url.includes("perplexity.ai") ||
+          url.includes("/spaces") || url.includes("/library") ||
+          url.includes("/discover") || url.includes("/finance");
+        if (needsNav) {
           await cometClient.navigate("https://www.perplexity.ai/", true);
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         // Try both UI patterns: button group (wide) and dropdown (narrow)
@@ -482,105 +489,98 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "comet_folders": {
         const action = (args?.action as string) || "list";
-        const folderName = args?.name as string;
+        const spaceName = args?.name as string;
 
         if (action === "list") {
-          // Navigate to library and extract folders
-          await cometClient.navigate("https://www.perplexity.ai/library", true);
+          // Navigate to spaces page (folders are now called "Spaces" in Perplexity)
+          await cometClient.navigate("https://www.perplexity.ai/spaces", true);
           await new Promise(resolve => setTimeout(resolve, 2000));
 
           const result = await cometClient.evaluate(`
             (() => {
-              const folders = [];
-              // Look for folder elements in the library sidebar/UI
-              const folderEls = document.querySelectorAll('[data-testid*="folder"], [class*="folder"], a[href*="/collection/"]');
-              for (const el of folderEls) {
-                const name = el.textContent?.trim();
+              const spaces = [];
+              // Look for space links in the UI
+              const spaceEls = document.querySelectorAll('a[href*="/spaces/"]');
+              for (const el of spaceEls) {
                 const href = el.getAttribute('href') || '';
-                if (name && name.length > 0 && name.length < 100) {
-                  folders.push({ name, href });
+                // Skip navigation links like /spaces or /spaces/templates
+                if (href === '/spaces' || href === '/spaces/templates' || !href.match(/\\/spaces\\/[a-zA-Z0-9-]+/)) {
+                  continue;
                 }
-              }
-
-              // Also check sidebar navigation
-              const sidebarLinks = document.querySelectorAll('nav a, aside a');
-              for (const link of sidebarLinks) {
-                const text = link.textContent?.trim();
-                const href = link.getAttribute('href') || '';
-                if (href.includes('/collection/') && text) {
-                  folders.push({ name: text, href });
+                const name = el.textContent?.trim()?.split(/\\d{1,2}\\s*(hr|min|sec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)[0]?.trim();
+                if (name && name.length > 0 && name.length < 100) {
+                  spaces.push({ name, href });
                 }
               }
 
               // Deduplicate
               const seen = new Set();
-              return folders.filter(f => {
-                if (seen.has(f.name)) return false;
-                seen.add(f.name);
+              return spaces.filter(s => {
+                if (seen.has(s.name)) return false;
+                seen.add(s.name);
                 return true;
               });
             })()
           `);
 
-          const folders = result.result.value as { name: string; href: string }[];
+          const spaces = result.result.value as { name: string; href: string }[];
 
-          if (folders.length === 0) {
-            return { content: [{ type: "text", text: "No folders found. Create one using comet_folders with action: 'create'" }] };
+          if (spaces.length === 0) {
+            return { content: [{ type: "text", text: "No spaces found. Create one using comet_folders with action: 'create'" }] };
           }
 
-          let output = `Found ${folders.length} folder(s):\n`;
-          for (const folder of folders) {
-            output += `  • ${folder.name}\n`;
+          let output = `Found ${spaces.length} space(s):\n`;
+          for (const space of spaces) {
+            output += `  • ${space.name}\n`;
           }
           return { content: [{ type: "text", text: output }] };
         }
 
         if (action === "create") {
-          if (!folderName) {
+          if (!spaceName) {
             return { content: [{ type: "text", text: "Error: 'name' is required for create action" }], isError: true };
           }
 
-          // Navigate to library and create folder
-          await cometClient.navigate("https://www.perplexity.ai/library", true);
+          // Navigate to spaces page
+          await cometClient.navigate("https://www.perplexity.ai/spaces", true);
           await new Promise(resolve => setTimeout(resolve, 2000));
 
           const result = await cometClient.evaluate(`
             (() => {
-              // Look for "New folder" or "Create folder" button
+              // Look for "New Space" button (aria-label="New Space")
+              const newSpaceBtn = document.querySelector('button[aria-label="New Space"]');
+              if (newSpaceBtn) {
+                newSpaceBtn.click();
+                return { clicked: true };
+              }
+
+              // Fallback: look for button with text
               const createBtns = document.querySelectorAll('button');
               for (const btn of createBtns) {
                 const text = btn.textContent?.toLowerCase() || '';
-                if (text.includes('new folder') || text.includes('create folder') || text.includes('add folder')) {
+                if (text.includes('new space') || text.includes('create space')) {
                   btn.click();
                   return { clicked: true };
                 }
               }
 
-              // Try the + button
-              for (const btn of createBtns) {
-                if (btn.querySelector('svg') && btn.getAttribute('aria-label')?.toLowerCase().includes('add')) {
-                  btn.click();
-                  return { clicked: true };
-                }
-              }
-
-              return { clicked: false, error: 'Create folder button not found' };
+              return { clicked: false, error: 'New Space button not found' };
             })()
           `);
 
           const clickResult = result.result.value as { clicked: boolean; error?: string };
 
           if (!clickResult.clicked) {
-            return { content: [{ type: "text", text: `Could not create folder: ${clickResult.error}. Try creating it manually in Perplexity.` }], isError: true };
+            return { content: [{ type: "text", text: `Could not create space: ${clickResult.error}. Try creating it manually in Perplexity.` }], isError: true };
           }
 
-          // Wait for dialog and enter folder name
+          // Wait for dialog and enter space name
           await new Promise(resolve => setTimeout(resolve, 500));
           await cometClient.evaluate(`
             (() => {
-              const input = document.querySelector('input[type="text"], input[placeholder*="folder"], input[placeholder*="name"]');
+              const input = document.querySelector('input[type="text"], input[placeholder*="space"], input[placeholder*="name"], input[placeholder*="Space"]');
               if (input) {
-                input.value = '${folderName.replace(/'/g, "\\'")}';
+                input.value = '${spaceName.replace(/'/g, "\\'")}';
                 input.dispatchEvent(new Event('input', { bubbles: true }));
               }
             })()
@@ -601,18 +601,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             })()
           `);
 
-          return { content: [{ type: "text", text: `Created folder: ${folderName}` }] };
+          return { content: [{ type: "text", text: `Created space: ${spaceName}` }] };
         }
 
         if (action === "save") {
-          if (!folderName) {
-            return { content: [{ type: "text", text: "Error: 'name' is required to specify which folder to save to" }], isError: true };
+          if (!spaceName) {
+            return { content: [{ type: "text", text: "Error: 'name' is required to specify which space to save to" }], isError: true };
           }
 
-          // Try to save current thread to folder via UI
+          // Try to save current thread to space via UI
           const result = await cometClient.evaluate(`
             (() => {
-              // Look for save/bookmark/add to folder button
+              // Look for save/bookmark/add to space button
               const btns = document.querySelectorAll('button');
               for (const btn of btns) {
                 const label = (btn.getAttribute('aria-label') || '').toLowerCase();
@@ -633,28 +633,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return { content: [{ type: "text", text: `Could not save: ${saveResult.error}` }], isError: true };
           }
 
-          // Wait for folder picker and select folder
+          // Wait for space picker and select space
           await new Promise(resolve => setTimeout(resolve, 500));
           const selectResult = await cometClient.evaluate(`
             (() => {
-              // Look for folder in the picker
+              // Look for space in the picker
               const items = document.querySelectorAll('[role="menuitem"], [role="option"], button, a');
               for (const item of items) {
-                if (item.textContent?.includes('${folderName.replace(/'/g, "\\'")}')) {
+                if (item.textContent?.includes('${spaceName.replace(/'/g, "\\'")}')) {
                   item.click();
                   return { selected: true };
                 }
               }
-              return { selected: false, error: 'Folder not found in picker' };
+              return { selected: false, error: 'Space not found in picker' };
             })()
           `);
 
           const selectRes = selectResult.result.value as { selected: boolean; error?: string };
 
           if (selectRes.selected) {
-            return { content: [{ type: "text", text: `Saved to folder: ${folderName}` }] };
+            return { content: [{ type: "text", text: `Saved to space: ${spaceName}` }] };
           } else {
-            return { content: [{ type: "text", text: `Could not select folder: ${selectRes.error}` }], isError: true };
+            return { content: [{ type: "text", text: `Could not select space: ${selectRes.error}` }], isError: true };
           }
         }
 
@@ -751,12 +751,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "comet_done": {
-        const saveToFolder = args?.save_to_folder as string | undefined;
+        const saveToSpace = args?.save_to_folder as string | undefined;
 
-        // Optional: save to folder before closing
-        if (saveToFolder) {
+        // Optional: save to space before closing
+        if (saveToSpace) {
           try {
-            // Click the save/folder button and save to specified folder
+            // Click the save button and save to specified space
             await cometClient.evaluate(`
               (() => {
                 // Look for save/bookmark button
@@ -766,13 +766,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `);
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Try to select or create folder
+            // Try to select space
             await cometClient.evaluate(`
               (() => {
-                const folderName = '${saveToFolder.replace(/'/g, "\\'")}';
-                const folderItems = document.querySelectorAll('[role="menuitem"], [class*="folder"], button');
-                for (const item of folderItems) {
-                  if (item.textContent?.includes(folderName)) {
+                const spaceName = '${saveToSpace.replace(/'/g, "\\'")}';
+                const spaceItems = document.querySelectorAll('[role="menuitem"], [class*="space"], button, a');
+                for (const item of spaceItems) {
+                  if (item.textContent?.includes(spaceName)) {
                     item.click();
                     return;
                   }
@@ -792,8 +792,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Hide the app
         await cometClient.hideApp();
 
-        const msg = saveToFolder
-          ? `Research saved to "${saveToFolder}" and closed. Ready for next task.`
+        const msg = saveToSpace
+          ? `Research saved to "${saveToSpace}" and closed. Ready for next task.`
           : "Research closed. Ready for next task.";
 
         return { content: [{ type: "text", text: msg }] };

@@ -15,8 +15,8 @@ Use the Comet MCP server to perform deep web research via Perplexity AI's agenti
 | `comet_ask` | Send research query and get response |
 | `comet_poll` | Check status of long-running research tasks |
 | `comet_stop` | Stop current task if going off-track |
-| `comet_mode` | Switch Perplexity mode (search/research/labs/learn) |
-| `comet_folders` | Manage research folders (list/create/save) |
+| `comet_mode` | Switch Perplexity mode (search/research/labs) |
+| `comet_folders` | Manage research spaces (list/create/save) |
 | `comet_library` | Search past research in Perplexity library |
 | `comet_screenshot` | Capture current page state |
 
@@ -45,8 +45,7 @@ Choose the appropriate mode based on the task:
 |------|----------|-------|
 | **search** | Quick facts, definitions, simple questions | Fast (5-15s) |
 | **research** | In-depth analysis, multiple sources, citations | Slow (30s-5min) |
-| **labs** | Data visualization, charts, statistical analysis | Medium |
-| **learn** | Educational explanations, tutorials, concepts | Medium |
+| **labs** | Create files, apps, and visualizations | Medium |
 
 ## Research Workflow
 
@@ -79,7 +78,7 @@ comet_poll()
 
 ### Step 5: Save Important Research
 ```
-comet_folders(action="save", name="My Research Folder")
+comet_folders(action="save", name="My Research Space")
 ```
 
 ## Best Practices
@@ -89,7 +88,7 @@ comet_folders(action="save", name="My Research Folder")
 3. **Use research mode** for comprehensive analysis
 4. **Poll for long tasks** instead of long timeouts
 5. **Cite sources** from the response in your answer
-6. **Save valuable research** to folders for future reference
+6. **Save valuable research** to spaces for future reference
 
 ## Error Handling
 

@@ -147,10 +147,10 @@ export class CometAI {
               const btnRect = btn.getBoundingClientRect();
               const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
 
-              // Skip mode/attach/voice buttons
-              if (ariaLabel.includes('search') || ariaLabel.includes('research') ||
-                  ariaLabel.includes('labs') || ariaLabel.includes('learn') ||
-                  ariaLabel.includes('attach') || ariaLabel.includes('voice')) {
+              // Skip mode/attach/voice buttons (updated for new Perplexity UI)
+              if (ariaLabel.includes('search') || ariaLabel.includes('deep research') ||
+                  ariaLabel.includes('create files') || ariaLabel.includes('attach') ||
+                  ariaLabel.includes('voice') || ariaLabel.includes('dictation')) {
                 continue;
               }
 

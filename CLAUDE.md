@@ -19,8 +19,8 @@ Claude Code → MCP Server (index.ts) → CometAI (comet-ai.ts) → CDP Client (
 - `comet_poll` - Check status of long-running tasks
 - `comet_stop` - Stop current task
 - `comet_screenshot` - Capture current page
-- `comet_mode` - Switch Perplexity modes (search/research/labs/learn)
-- `comet_folders` - Manage research folders (list/create/save)
+- `comet_mode` - Switch Perplexity modes (search/research/labs)
+- `comet_folders` - Manage research spaces (list/create/save)
 - `comet_library` - Search existing research in Perplexity library
 
 ## Key Implementation Details
@@ -65,8 +65,8 @@ Manual testing only (integration code, external DOM dependency).
 3. **Isolated instance** - Personal Comet tabs unaffected
 4. **First login** - Fresh install prompts for Perplexity sign-in
 5. **Agentic task** - "Take control of browser" triggers browsing
-6. **Mode switching** - `comet_mode` changes search/research/labs/learn
-7. **Folders** - `comet_folders` lists/creates/saves to folders
+6. **Mode switching** - `comet_mode` changes search/research/labs
+7. **Spaces** - `comet_folders` lists/creates/saves to spaces
 8. **Library search** - `comet_library` finds past research
 
 ## Known Edge Cases
