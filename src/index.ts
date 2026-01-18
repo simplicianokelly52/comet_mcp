@@ -93,6 +93,19 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "comet_done",
+    description: "Call when you're finished with the current research and won't need it anymore. Clears the research context and hides the app. Use after you've gathered all needed information and answered all follow-up questions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        save_to_folder: {
+          type: "string",
+          description: "Optional: folder name to save research before closing",
+        },
+      },
+    },
+  },
 ];
 
 const server = new Server(
@@ -269,8 +282,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
           // Task completed - return result directly (but only if we saw a NEW response)
           if (status.status === 'completed' && sawNewResponse) {
-            // Minimize window after successful response
-            await cometClient.hideApp();
             return { content: [{ type: "text", text: status.response || 'Task completed (no response text extracted)' }] };
           }
         }
@@ -298,8 +309,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // If completed, return the response directly (most useful case)
         if (status.status === 'completed' && status.response) {
-          // Minimize window after successful response
-          await cometClient.hideApp();
           return { content: [{ type: "text", text: status.response }] };
         }
 
@@ -739,6 +748,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         return { content: [{ type: "text", text: output }] };
+      }
+
+      case "comet_done": {
+        const saveToFolder = args?.save_to_folder as string | undefined;
+
+        // Optional: save to folder before closing
+        if (saveToFolder) {
+          try {
+            // Click the save/folder button and save to specified folder
+            await cometClient.evaluate(`
+              (() => {
+                // Look for save/bookmark button
+                const saveBtn = document.querySelector('[aria-label*="save"], [aria-label*="Save"], button[class*="bookmark"], button[class*="save"]');
+                if (saveBtn) saveBtn.click();
+              })()
+            `);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Try to select or create folder
+            await cometClient.evaluate(`
+              (() => {
+                const folderName = '${saveToFolder.replace(/'/g, "\\'")}';
+                const folderItems = document.querySelectorAll('[role="menuitem"], [class*="folder"], button');
+                for (const item of folderItems) {
+                  if (item.textContent?.includes(folderName)) {
+                    item.click();
+                    return;
+                  }
+                }
+              })()
+            `);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch {
+            // Continue even if save fails
+          }
+        }
+
+        // Navigate to home to clear research context
+        await cometClient.navigate("https://www.perplexity.ai/", true);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Hide the app
+        await cometClient.hideApp();
+
+        const msg = saveToFolder
+          ? `Research saved to "${saveToFolder}" and closed. Ready for next task.`
+          : "Research closed. Ready for next task.";
+
+        return { content: [{ type: "text", text: msg }] };
       }
 
       default:
