@@ -898,12 +898,32 @@ export class CometCDPClient {
   }
 
   /**
-   * Press a key
+   * Press a key with full CDP event properties for React compatibility
    */
   async pressKey(key: string): Promise<void> {
     this.ensureConnected();
-    await this.client!.Input.dispatchKeyEvent({ type: "keyDown", key });
-    await this.client!.Input.dispatchKeyEvent({ type: "keyUp", key });
+
+    // Special handling for Enter key - React apps need full event properties
+    if (key === "Enter") {
+      await this.client!.Input.dispatchKeyEvent({
+        type: "keyDown",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13,
+        text: "\r"
+      });
+      await this.client!.Input.dispatchKeyEvent({
+        type: "keyUp",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13
+      });
+    } else {
+      await this.client!.Input.dispatchKeyEvent({ type: "keyDown", key });
+      await this.client!.Input.dispatchKeyEvent({ type: "keyUp", key });
+    }
   }
 
   /**

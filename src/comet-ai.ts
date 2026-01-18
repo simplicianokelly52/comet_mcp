@@ -38,20 +38,26 @@ export class CometAI {
       throw new Error("Could not find input element. Navigate to Perplexity first.");
     }
 
-    // Focus the input element
+    // Focus the input element and clear using proper DOM manipulation
     const focused = await cometClient.evaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]');
         if (el) {
           el.focus();
-          // Clear existing content
-          el.innerHTML = '';
+          // Select all and delete to properly trigger React state update
+          document.execCommand('selectAll', false, null);
+          document.execCommand('delete', false, null);
+          // Dispatch input event to sync React state
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
           return { type: 'contenteditable' };
         }
         const textarea = document.querySelector('textarea');
         if (textarea) {
           textarea.focus();
-          textarea.value = '';
+          textarea.select();
+          // Use execCommand for textarea too
+          document.execCommand('delete', false, null);
+          textarea.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
           return { type: 'textarea' };
         }
         return null;
