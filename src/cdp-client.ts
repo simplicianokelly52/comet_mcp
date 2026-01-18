@@ -788,6 +788,9 @@ export class CometCDPClient {
       this.client.Network.enable(),
     ]);
 
+    // Intercept popups to keep browsing inside Comet (not Chrome)
+    await this.setupPopupInterception();
+
     // Ensure window is visible and usable (don't force specific size - let user resize)
     try {
       const { windowId } = await (this.client as any).Browser.getWindowForTarget({ targetId });
@@ -943,6 +946,107 @@ export class CometCDPClient {
   private ensureConnected(): void {
     if (!this.client) {
       throw new Error("Not connected to Comet. Call connect() first.");
+    }
+  }
+
+  /**
+   * Set up interception for popups/new windows to keep browsing inside Comet
+   * This prevents Perplexity's agentic browsing from opening Chrome
+   */
+  private async setupPopupInterception(): Promise<void> {
+    if (!this.client) return;
+
+    try {
+      // Enable auto-attach to catch new targets (popups, new windows)
+      await (this.client as any).Target.setAutoAttach({
+        autoAttach: true,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      });
+
+      // Listen for new targets and handle them
+      (this.client as any).Target.on('attachedToTarget', async (params: any) => {
+        const { targetInfo, sessionId } = params;
+
+        // If it's a new page/popup, handle it within Comet
+        if (targetInfo.type === 'page' && targetInfo.url && targetInfo.url !== 'about:blank') {
+          console.log(`[MCP] Intercepted popup: ${targetInfo.url}`);
+        }
+      });
+
+      // Inject JavaScript to override window.open() and keep navigation in Comet
+      await this.injectPopupOverride();
+    } catch (error) {
+      // Non-critical - continue without popup interception
+      console.error('[MCP] Popup interception setup failed:', error);
+    }
+  }
+
+  /**
+   * Inject JavaScript to override window.open() behavior
+   * Opens URLs in new Comet tabs instead of external Chrome
+   */
+  private async injectPopupOverride(): Promise<void> {
+    if (!this.client) return;
+
+    try {
+      // Add script to execute on every new document
+      await (this.client as any).Page.addScriptToEvaluateOnNewDocument({
+        source: `
+          (function() {
+            // Store original window.open
+            const originalOpen = window.open;
+
+            // Override window.open to prevent external browser
+            window.open = function(url, target, features) {
+              // If URL is provided, try to handle it internally
+              if (url && typeof url === 'string') {
+                // Check if it's an absolute URL to external site
+                if (url.startsWith('http://') || url.startsWith('https://')) {
+                  // For external URLs, open in a new tab within Comet
+                  // by returning null (handled by CDP) or navigating current window
+                  console.log('[MCP] Intercepted window.open:', url);
+
+                  // Create a link and click it to open in new tab
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.target = '_blank';
+                  link.rel = 'noopener';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+
+                  // Return null to prevent external browser
+                  return null;
+                }
+              }
+              // For other cases, use original behavior
+              return originalOpen.call(window, url, target, features);
+            };
+
+            // Also intercept shell.openExternal if available (Electron)
+            if (typeof require !== 'undefined') {
+              try {
+                const { shell } = require('electron');
+                if (shell && shell.openExternal) {
+                  const originalOpenExternal = shell.openExternal.bind(shell);
+                  shell.openExternal = function(url, options) {
+                    console.log('[MCP] Intercepted shell.openExternal:', url);
+                    // Navigate within Comet instead
+                    window.location.href = url;
+                    return Promise.resolve();
+                  };
+                }
+              } catch (e) {
+                // Not in Electron context, ignore
+              }
+            }
+          })();
+        `
+      });
+    } catch (error) {
+      // Non-critical - continue without override
+      console.error('[MCP] Failed to inject popup override:', error);
     }
   }
 }

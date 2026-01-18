@@ -41,7 +41,7 @@ echo "[3/6] Setting unique bundle ID..."
 
 # Download and apply icon
 echo "[4/6] Downloading custom MCP icon..."
-ICON_URL="https://raw.githubusercontent.com/hanzili/comet-mcp/main/assets/comet-mcp.icns"
+ICON_URL="https://raw.githubusercontent.com/hanzili/comet-mcp/main/assets/icon.icns"
 ICON_TMP="/tmp/comet-mcp-icon.icns"
 
 if curl -sL "$ICON_URL" -o "$ICON_TMP" 2>/dev/null; then
@@ -71,8 +71,17 @@ set iconImage to current application's NSImage's alloc()'s initWithContentsOfFil
 current application's NSWorkspace's sharedWorkspace()'s setIcon:iconImage forFile:appPath options:0
 EOF
 
-# Refresh Finder
+# Clear icon cache (macOS caches icons aggressively)
+echo "      Clearing icon cache..."
+rm -f "$MCP_APP/Contents/Resources/.DS_Store" 2>/dev/null || true
+touch "$MCP_APP"
+touch "$MCP_APP/Contents/Info.plist"
+sudo rm -rf /Library/Caches/com.apple.iconservices.store 2>/dev/null || true
+rm -rf ~/Library/Caches/com.apple.iconservices.store 2>/dev/null || true
+
+# Refresh Finder and Dock
 killall Finder 2>/dev/null || true
+killall Dock 2>/dev/null || true
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
