@@ -77,9 +77,64 @@ const DEFAULT_PORT = 9222;
 // MCP uses a SEPARATE Comet instance to avoid interfering with user's personal browser
 
 /**
- * Port for MCP-dedicated Comet instance (different from user's Comet on 9222)
+ * Base port for MCP-dedicated Comet instance (different from user's Comet on 9222)
+ * Will try alternative ports if this one is blocked
  */
-const MCP_PORT = 9223;
+const MCP_BASE_PORT = 9223;
+const activeMcpPort_RANGE = [9223, 9224, 9225, 9226];
+
+/**
+ * Currently active MCP port (may differ from base if base was blocked)
+ */
+let activeMcpPort: number = MCP_BASE_PORT;
+
+/**
+ * Check if a port is truly available (not just listening, but responding)
+ */
+async function isPortResponding(port: number): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(`http://localhost:${port}/json/version`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a port is blocked (process listening but not responding - zombie)
+ */
+async function isPortBlocked(port: number): Promise<boolean> {
+  try {
+    // Check if something is listening
+    const result = execSync(`lsof -i :${port} 2>/dev/null | grep LISTEN`, { encoding: 'utf8' });
+    if (result.trim()) {
+      // Something is listening, check if it responds
+      const responds = await isPortResponding(port);
+      return !responds; // Blocked if listening but not responding
+    }
+    return false; // Not blocked if nothing listening
+  } catch {
+    return false; // lsof failed = nothing listening = not blocked
+  }
+}
+
+/**
+ * Find an available MCP port (not blocked by zombie processes)
+ */
+async function findAvailableMcpPort(): Promise<number> {
+  for (const port of activeMcpPort_RANGE) {
+    const blocked = await isPortBlocked(port);
+    if (!blocked) {
+      return port;
+    }
+    console.error(`Port ${port} is blocked by unresponsive process, trying next...`);
+  }
+  // All ports blocked, return base and let it fail with clear error
+  return MCP_BASE_PORT;
+}
 
 /**
  * Get MCP-specific user data directory for isolated browser profile
@@ -240,7 +295,7 @@ export class CometCDPClient {
       } catch {
         // Reconnect failed, try to restart Comet entirely
         try {
-          await this.startComet(MCP_PORT);
+          await this.startComet(activeMcpPort);
           await this.connect();
         } catch (startError) {
           throw new Error(
@@ -387,7 +442,7 @@ export class CometCDPClient {
     return new Promise((resolve) => {
       if (IS_WINDOWS) {
         // Windows: use WMIC to find Comet with MCP port in command line
-        const check = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${MCP_PORT}%'`, 'get', 'processid']);
+        const check = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${activeMcpPort}%'`, 'get', 'processid']);
         let output = '';
         check.stdout?.on('data', (data) => { output += data.toString(); });
         check.on('close', () => {
@@ -399,7 +454,7 @@ export class CometCDPClient {
       } else {
         // macOS/Linux: use pgrep with MCP-specific port pattern
         // This ensures we only detect MCP Comet, not personal Comet on port 9222
-        const check = spawn('pgrep', ['-f', `remote-debugging-port=${MCP_PORT}`]);
+        const check = spawn('pgrep', ['-f', `remote-debugging-port=${activeMcpPort}`]);
         check.on('close', (code) => resolve(code === 0));
         check.on('error', () => resolve(false));
       }
@@ -414,13 +469,13 @@ export class CometCDPClient {
     return new Promise((resolve) => {
       if (IS_WINDOWS) {
         // Windows: use WMIC to find and kill only MCP Comet by port
-        const kill = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${MCP_PORT}%'`, 'call', 'terminate']);
+        const kill = spawn('wmic', ['process', 'where', `name='comet.exe' and commandline like '%--remote-debugging-port=${activeMcpPort}%'`, 'call', 'terminate']);
         kill.on('close', () => setTimeout(resolve, 1000));
         kill.on('error', () => setTimeout(resolve, 1000));
       } else {
         // macOS/Linux: use pkill with MCP-specific port pattern
         // This ensures we ONLY kill MCP Comet, never personal Comet on port 9222
-        const kill = spawn('pkill', ['-f', `remote-debugging-port=${MCP_PORT}`]);
+        const kill = spawn('pkill', ['-f', `remote-debugging-port=${activeMcpPort}`]);
         kill.on('close', () => setTimeout(resolve, 1000));
         kill.on('error', () => setTimeout(resolve, 1000));
       }
@@ -431,14 +486,13 @@ export class CometCDPClient {
    * Start Comet browser with remote debugging enabled
    * Handles macOS, Windows, and WSL environments
    */
-  async startComet(port: number = MCP_PORT): Promise<string> {
-    this.state.port = port;
-
-    // Ensure we're using MCP port, never interfere with user's Comet on 9222
-    if (port === 9222) {
-      port = MCP_PORT;
-      this.state.port = port;
+  async startComet(port: number = MCP_BASE_PORT): Promise<string> {
+    // Find an available port (skip blocked/zombie ports)
+    if (port === MCP_BASE_PORT || port === 9222) {
+      port = await findAvailableMcpPort();
     }
+    activeMcpPort = port;
+    this.state.port = port;
 
     // Create MCP data directory if it doesn't exist
     const { mkdirSync } = await import('fs');
@@ -667,23 +721,20 @@ export class CometCDPClient {
         // This bypasses Electron's single-instance lock by being a "different app"
         if (platform() === 'darwin') {
           const mcpAppPath = `${process.env.HOME}/.comet-mcp/Comet-MCP.app`;
-          const mcpAppExists = existsSync(mcpAppPath);
+          const mcpExecutable = `${mcpAppPath}/Contents/MacOS/Comet`;
+          const mcpAppExists = existsSync(mcpExecutable);
 
           if (mcpAppExists) {
-            // Use the MCP-specific Comet app (different bundle ID = truly separate)
-            // -g flag: launch in background without bringing to foreground
-            this.cometProcess = spawn('open', [
-              '-g',  // Don't bring app to foreground
-              '-a', mcpAppPath,
-              '--args',
-              ...launchArgs,
-            ], {
+            // Use direct spawn of the MCP-specific Comet executable
+            // This avoids `open -a` which can fail with code signing errors (-600)
+            this.cometProcess = spawn(mcpExecutable, launchArgs, {
               detached: true,
               stdio: 'ignore',
+              env: { ...process.env, ELECTRON_NO_ATTACH_CONSOLE: '1' },
             });
             this.cometProcess.unref();
           } else {
-            // Fallback: try direct spawn (may interfere with personal Comet)
+            // Fallback: try system Comet (may interfere with personal instance)
             console.error('Warning: ~/.comet-mcp/Comet-MCP.app not found. Run setup first.');
             this.cometProcess = spawn(COMET_PATH, launchArgs, {
               detached: true,
@@ -739,13 +790,21 @@ export class CometCDPClient {
       }
     }
 
+    const mcpAppPath = platform() === 'darwin'
+      ? `${process.env.HOME}/.comet-mcp/Comet-MCP.app/Contents/MacOS/Comet`
+      : COMET_PATH;
+
     throw new Error(
       `Cannot start MCP Comet after ${maxRetries} attempts.\n` +
-      `Path: ${COMET_PATH}\n` +
+      `Path: ${mcpAppPath}\n` +
+      `Port: ${port} (tried ports: ${activeMcpPort_RANGE.join(', ')})\n` +
       `Args: ${launchArgs.join(' ')}\n` +
       `Data dir: ${MCP_DATA_DIR}\n` +
       `Error: ${lastError?.message}\n\n` +
-      `Try manually: ${COMET_PATH} ${launchArgs.join(' ')}`
+      `Troubleshooting:\n` +
+      `1. Kill zombie processes: pkill -9 -f "comet-mcp"\n` +
+      `2. Try manually: ${mcpAppPath} ${launchArgs.join(' ')}\n` +
+      `3. If ports stuck, may need reboot`
     );
   }
 
