@@ -100,13 +100,27 @@ export class CometAI {
     }
 
     // Strategy 1: Use Enter key (most reliable for Perplexity)
+    // Dispatch keyboard event directly to the input element
     await cometClient.evaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]') ||
                    document.querySelector('textarea');
-        if (el) el.focus();
+        if (el) {
+          el.focus();
+          // Dispatch Enter key event directly
+          const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          el.dispatchEvent(enterEvent);
+        }
       })()
     `);
+    // Also try CDP pressKey as backup
     await cometClient.pressKey("Enter");
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -124,6 +138,7 @@ export class CometAI {
     // Strategy 2: Click submit button
     await cometClient.evaluate(`
       (() => {
+        // Try specific selectors first
         const selectors = [
           'button[aria-label*="Submit"]',
           'button[aria-label*="Send"]',
@@ -139,7 +154,25 @@ export class CometAI {
           }
         }
 
-        // Find rightmost button with SVG near input
+        // Find the submit button by looking for cyan/teal colored button with arrow
+        // This is the Perplexity-specific submit button
+        const allButtons = document.querySelectorAll('button');
+        for (const btn of allButtons) {
+          const style = window.getComputedStyle(btn);
+          const bgColor = style.backgroundColor;
+          // Cyan/teal colors typically have high G and B values
+          const match = bgColor.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
+          if (match) {
+            const [, r, g, b] = match.map(Number);
+            // Check for cyan-ish color (low red, high green/blue)
+            if (r < 100 && g > 150 && b > 150 && btn.querySelector('svg')) {
+              btn.click();
+              return true;
+            }
+          }
+        }
+
+        // Fallback: Find rightmost button with SVG near input
         const inputEl = document.querySelector('[contenteditable="true"]') ||
                         document.querySelector('textarea');
         if (inputEl) {
@@ -147,16 +180,17 @@ export class CometAI {
           let parent = inputEl.parentElement;
           let candidates = [];
 
-          for (let i = 0; i < 4 && parent; i++) {
+          for (let i = 0; i < 5 && parent; i++) {
             const btns = parent.querySelectorAll('button:not([disabled])');
             for (const btn of btns) {
               const btnRect = btn.getBoundingClientRect();
               const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
 
-              // Skip mode/attach/voice buttons (updated for new Perplexity UI)
+              // Skip mode/attach/voice buttons
               if (ariaLabel.includes('search') || ariaLabel.includes('deep research') ||
                   ariaLabel.includes('create files') || ariaLabel.includes('attach') ||
-                  ariaLabel.includes('voice') || ariaLabel.includes('dictation')) {
+                  ariaLabel.includes('voice') || ariaLabel.includes('dictation') ||
+                  ariaLabel.includes('focus')) {
                 continue;
               }
 
@@ -171,8 +205,10 @@ export class CometAI {
           if (candidates.length > 0) {
             candidates.sort((a, b) => b.right - a.right);
             candidates[0].btn.click();
+            return true;
           }
         }
+        return false;
       })()
     `);
 
